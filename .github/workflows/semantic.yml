@@ -1,0 +1,103 @@
+---
+name: Semantic
+
+"on":
+  pull_request:
+    branches:
+      - main
+      - rc
+  push:
+    branches:
+      - main
+      - rc
+
+env:
+  GIT_AUTHOR_NAME: github-actions[bot]
+  GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+  GIT_COMMITTER_NAME: github-actions[bot]
+  GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+
+jobs:
+  validate:
+    name: "Validate"
+    runs-on: ubuntu-latest
+    concurrency:
+      group: semantic-validate-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    # Runs when: pull_request targeting main or rc
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # actions/checkout fetch-depth: 0 includes tags but not semantic-release channel notes.
+      - name: Fetch semantic-release notes
+        run: git fetch origin '+refs/notes/*:refs/notes/*'
+
+      - name: Validate release policy and PR commits
+        run: |
+          docker run --rm \
+            --user 1001 \
+            --read-only \
+            --tmpfs /tmp:exec \
+            -v "${{ github.workspace }}:/workspace" \
+            -e SEMANTIC_RELEASE_DIFF_OUTPUT=/workspace/validation-artifacts/release.diff \
+            -w /workspace \
+            ${{ vars.SEMANTIC_RELEASE_IMAGE || 'ghcr.io/disafronov/semantic-release' }}:${{ vars.SEMANTIC_RELEASE_TAG || 'latest' }} \
+            --validate --base-branch "${{ github.base_ref }}"
+
+      - name: Upload validation diff
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: semantic-validation-diff-${{ github.event.pull_request.number }}
+          path: validation-artifacts/release.diff
+          if-no-files-found: ignore
+
+
+  release:
+    name: "Release"
+    runs-on: ubuntu-latest
+    # Runs when: push to main or rc
+    if: >-
+      github.event_name == 'push' && (
+        github.ref == 'refs/heads/rc' ||
+        github.ref == 'refs/heads/main'
+      )
+    permissions:
+      contents: write
+      pull-requests: write
+    concurrency:
+      group: semantic-release-${{ github.ref_name }}
+      cancel-in-progress: false
+    env:
+      GITHUB_TOKEN: ${{ secrets.SEMANTIC_RELEASE_TOKEN }}
+    steps:
+      - name: Validate release token
+        run: |
+          if [[ -z "$GITHUB_TOKEN" ]]; then
+            echo "::error::SEMANTIC_RELEASE_TOKEN is required"
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          token: ${{ env.GITHUB_TOKEN }}
+
+      - name: Semantic release
+        run: |
+          docker run --rm \
+            --user 1001 \
+            --read-only \
+            --tmpfs /tmp:exec \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            -e GITHUB_TOKEN \
+            -e CI=true \
+            ${{ vars.SEMANTIC_RELEASE_IMAGE || 'ghcr.io/disafronov/semantic-release' }}:${{ vars.SEMANTIC_RELEASE_TAG || 'latest' }}

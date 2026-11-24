@@ -1,0 +1,156 @@
+## [4.0.4](https://github.com/disafronov/semantic-basic-template/compare/v4.0.3...v4.0.4) (2026-11-23)
+
+### Bug Fixes
+
+* allow uv-managed Python execution during semantic-release ([da94eb9](https://github.com/disafronov/semantic-basic-template/commit/da94eb9707d490efe6e4f965761417b6cd7d5122))
+
+## [4.0.3](https://github.com/disafronov/semantic-basic-template/compare/v4.0.2...v4.0.3) (2026-11-20)
+
+### Code Refactoring
+
+* Update upload-artifact action to version v7 ([1788898](https://github.com/disafronov/semantic-basic-template/commit/178889871a33ccceed82f60d8c12aca27952fdcb))
+
+## [4.0.2](https://github.com/disafronov/semantic-basic-template/compare/v4.0.1...v4.0.2) (2026-11-20)
+
+### Bug Fixes
+
+* inherit complete isolated release validation workflow ([fdfd319](https://github.com/disafronov/semantic-basic-template/commit/fdfd3196ebcbf8d0e9589b68089353c05e22e576))
+
+## [4.0.1](https://github.com/disafronov/semantic-basic-template/compare/v4.0.0...v4.0.1) (2026-11-20)
+
+### Bug Fixes
+
+* validate PR release policy instead of exiting early ([9d21099](https://github.com/disafronov/semantic-basic-template/commit/9d210995aba3574a8a5c75fd1a8e979dc3cea910))
+
+## [4.0.0](https://github.com/disafronov/semantic-basic-template/compare/v3.1.0...v4.0.0) (2026-11-03)
+
+### ⚠ BREAKING CHANGES
+
+* The distributed semantic workflow no longer automatically rebases open pull requests after a release on main. Consumers must update their branches explicitly when needed.
+
+Signed-off-by: [secure] <[secure]>
+
+### Code Refactoring
+
+* remove automatic post-release rebasing from semantic template ([d91c92e](https://github.com/disafronov/semantic-basic-template/commit/d91c92ec465df6134c4562e4ec7aaaac2b0295bf))
+
+## [3.1.0](https://github.com/disafronov/semantic-basic-template/compare/v3.0.2...v3.1.0) (2026-11-03)
+
+### Features
+
+* allow overriding semantic-release image ([caa3ffa](https://github.com/disafronov/semantic-basic-template/commit/caa3ffaa928f831457509addd9adb6c4cc928953))
+
+## [3.0.2](https://github.com/disafronov/semantic-basic-template/compare/v3.0.1...v3.0.2) (2026-11-03)
+
+### Bug Fixes
+
+* **ci:** require semantic release token ([564c025](https://github.com/disafronov/semantic-basic-template/commit/564c025a0b33030668b8c6895f2a8d4f97d7b1ce))
+
+## [3.0.1](https://github.com/disafronov/semantic-basic-template/compare/v3.0.0...v3.0.1) (2026-11-02)
+
+### Code Refactoring
+
+* sync from template v1.1.3 ([d61729b](https://github.com/disafronov/semantic-basic-template/commit/d61729bc89d0e3e4ca89f79c813ce76fe88aae65))
+
+## [3.0.0](https://github.com/disafronov/semantic-basic-template/compare/v2.4.0...v3.0.0) (2026-11-02)
+
+### ⚠ BREAKING CHANGES
+
+* Repositories using the legacy release branch must migrate
+to main as the stable release branch before adopting this workflow.
+
+Signed-off-by: Dmitrii Safronov <dhameoelin@gmail.com>
+
+### Features
+
+* remove legacy release branch support ([97cba50](https://github.com/disafronov/semantic-basic-template/commit/97cba50e756162aad7c5065b677abc17a9918501))
+
+## [2.4.0](https://github.com/disafronov/semantic-basic-template/compare/v2.3.2...v2.4.0) (2026-11-02)
+
+### Features
+
+* **ci:** allow selecting semantic-release image tag via repository variable ([a158c82](https://github.com/disafronov/semantic-basic-template/commit/a158c82b9c38c2497b136367de36fdf83d51c3d6))
+
+## [2.3.2](https://github.com/disafronov/semantic-basic-template/compare/v2.3.1...v2.3.2) (2026-10-28)
+
+### Code Refactoring
+
+* sync from template v1.1.2 ([3bb2ce0](https://github.com/disafronov/semantic-basic-template/commit/3bb2ce035f9a1a6ac542f5a8b3ec110d5e2f4e5b))
+
+## [2.3.1](https://github.com/disafronov/semantic-basic-template/compare/v2.3.0...v2.3.1) (2026-10-27)
+
+### Bug Fixes
+
+* isolate PR assignment and document release workflows ([d2af076](https://github.com/disafronov/semantic-basic-template/commit/d2af0769d41d74270ed9b051ebbab2393a2a9a2d))
+
+### Code Refactoring
+
+* rely on bundled release configuration ([511c37c](https://github.com/disafronov/semantic-basic-template/commit/511c37c3ff76d99b1ad4fc32ee8ad5860de712fc))
+
+## [2.3.0](https://github.com/disafronov/semantic-basic-template/compare/v2.2.6...v2.3.0) (2026-10-27)
+
+### Features
+
+* support optional rc releases in shared semantic workflow ([8756778](https://github.com/disafronov/semantic-basic-template/commit/8756778f43956af9df7d68fd5085bb548bf936dc))
+
+## [2.2.6](https://github.com/disafronov/semantic-basic-template/compare/v2.2.5...v2.2.6) (2026-10-26)
+
+### Bug Fixes
+
+* keep template releases stable on main ([7b2e284](https://github.com/disafronov/semantic-basic-template/commit/7b2e284738b1f8886a98d53cd65909168ab0e16d))
+
+## [2.2.5](https://github.com/disafronov/semantic-basic-template/compare/v2.2.4...v2.2.5) (2026-10-25)
+
+### Bug Fixes
+
+* **ci:** use environment for Git commit identity ([d56671e](https://github.com/disafronov/semantic-basic-template/commit/d56671e0eb3f32f167e3b125646a395d9093b5de))
+
+## [2.2.4](https://github.com/disafronov/semantic-basic-template/compare/v2.2.3...v2.2.4) (2026-10-25)
+
+### Bug Fixes
+
+* **ci:** use GitHub Actions as the committer ([bd10119](https://github.com/disafronov/semantic-basic-template/commit/bd101194a576ddd0783ddf5f95e333b6a442b8bf))
+
+## [2.2.3](https://github.com/disafronov/semantic-basic-template/compare/v2.2.2...v2.2.3) (2026-10-25)
+
+## [2.2.2](https://github.com/disafronov/semantic-basic-template/compare/v2.2.1...v2.2.2) (2026-10-25)
+
+## [2.2.1](https://github.com/disafronov/semantic-basic-template/compare/v2.2.0...v2.2.1) (2026-10-25)
+
+## [2.2.0](https://github.com/disafronov/semantic-basic-template/compare/v2.1.2...v2.2.0) (2026-10-25)
+
+### Features
+
+* add release PR description workflow ([5c5b484](https://github.com/disafronov/semantic-basic-template/commit/5c5b484546a75e4b929b5e124bbf7b137f758d19))
+
+## [2.1.0](https://github.com/disafronov/semantic-basic-template/compare/v2.0.0...v2.1.0) (2026-04-28)
+
+### Features
+
+* validate release ([414ec38](https://github.com/disafronov/semantic-basic-template/commit/414ec38d1eacc32717d3d0238be9967c05f48aa6))
+
+## [2.0.0](https://github.com/disafronov/semantic-basic-template/compare/v1.1.0...v2.0.0) (2026-04-27)
+
+### ⚠ BREAKING CHANGES
+
+* **ci:** workflow/status check names changed (now grouped under "Semantic"); update branch protection required checks.
+
+Made-with: Cursor
+
+### Code Refactoring
+
+* **ci:** merge validate/release/rebase workflows into semantic.yaml ([a083a09](https://github.com/disafronov/semantic-basic-template/commit/a083a09d533db16f4a602f00e649b5be8ffcb9a8))
+
+## [1.1.0](https://github.com/disafronov/semantic-basic-template/compare/v1.0.4...v1.1.0) (2025-12-25)
+
+### Features
+
+* add condition to run rebase job only on release commits ([dd96593](https://github.com/disafronov/semantic-basic-template/commit/dd96593f688c8ca5bd4cae6da5c30a9f750c1fa3))
+
+## [1.0.4](https://github.com/disafronov/semantic-basic-template/compare/v1.0.3...v1.0.4) (2025-12-25)
+
+### Bug Fixes
+
+* add condition to skip release job for chore(release) commits ([d44a4da](https://github.com/disafronov/semantic-basic-template/commit/d44a4da0bdeb3376b90a921539e45605aac7bafb))
+
+## [1.0.3](https://github.com/disafronov/semantic-basic-template/compare/v1.0.2...v1.0.3) (2025-12-09)
