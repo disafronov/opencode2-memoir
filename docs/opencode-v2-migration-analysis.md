@@ -47,7 +47,7 @@ Main limitations:
 - `session.context` is bounded by the latest completed compaction. A mid-turn compaction can make the original user message unavailable. Capture immediately minimizes the window.
 - V2's agent schema has no generation temperature field; `temperature: 0` can only be expressed as provider request body, which is provider-dependent.
 - The `skill` tool is visible to an agent whose permission rules deny `*`; execution is denied, but visibility is a leak. A session context hook can remove it.
-- The plugin has no access to the resolved `model`/`small_model` config at setup. V1's model fallback must be replaced by `MEMOIR_AGENT_MODEL` or the session default.
+- The plugin has no access to the resolved `model`/`small_model` config at setup. V1's model fallback is replaced at capture time by `MEMOIR_AGENT_MODEL`, then the completed session's `model`, then the native default.
 - `session.wait` is marked experimental. It is verified on v2.4.1; an event-correlated fallback is documented.
 
 Recommended target lifecycle in one sentence: resolve the store, start/reuse one `memoir-mcp` per store, register a remote MCP server with `codemode: false`, register the restricted `memoir` agent and `memoir:onboard` command, listen for successful executions, snapshot the exact completed turn, persist it, and process captures serially per store with branch matching and bounded retries.
@@ -98,7 +98,7 @@ Recommended target lifecycle in one sentence: resolve the store, start/reuse one
 | Store path / worktrees | Git top-level plus common dir, `~/.memoir/<slug>` | Keep; feed `ctx.location.directory` into the existing helpers. |
 | One Memoir process avoids double spawn | One HTTP process per plugin instance registered as remote MCP | Keep the HTTP/remote pattern; **share it per store within one server process**. |
 | Hidden capture session without a user-visible response | Session with no `parentID`, `promptAsync`, silent agent | Keep conceptually; V2 supports `session.create` + `session.prompt`, and metadata improves cleanup. |
-| Model selection | Env, `small_model`, `model`, OpenCode default | Keep env; drop config fallbacks (no config API); omit model to use the session default. |
+| Model selection | Env, `small_model`, `model`, OpenCode default | Keep env; drop config fallbacks (no config API); carry the active session model into capture, otherwise omit it. |
 | Restricted agent | Permission object, wildcard allow, checkout deny last | Port to V2 ruleset; add tool-visibility hardening. |
 | Persist pending work across shutdown | In-memory drain, best effort | **Replace** with `ctx.storage` queue plus boot recovery. |
 | One active instance per store | Documented limitation | Relax within one server process via a per-store runtime and lock; cross-process remains unsupported. |
@@ -159,7 +159,7 @@ All V2 references are from tag `v2.4.1`. Paths are relative to the OpenCode repo
 | `session.create` | `ctx.session.create({ title, agent, metadata })` | `packages/core/src/session.ts:135` | Returns `SessionInfo`; metadata is opaque durable JSON. |
 | `promptAsync` | `ctx.session.prompt({ sessionID, text, delivery: "queue" })` | `packages/core/src/session.ts:212` | Returns the admitted user message; admission only, not completion. |
 | `session.delete` | `ctx.session.remove({ sessionID })` | `packages/core/src/session.ts:145` | Terminal events for an already removed session may still be delivered. |
-| Model fallback | `MEMOIR_AGENT_MODEL` -> `agent.model`; otherwise omit | `packages/schema/src/agent.ts:23`; `packages/plugin/src/promise/model.ts` | No config read API. `ctx.model.default()` at setup returned the free model, not the configured model; do not use it for the agent at setup. |
+| Model fallback | `MEMOIR_AGENT_MODEL` -> `session.model`; otherwise omit | `packages/schema/src/agent.ts:23`; `packages/plugin/src/promise/model.ts` | No config read API. `ctx.model.default()` at setup returned the free model, not the configured model; resolve per capture instead of setting `agent.model` at setup. |
 | Permission object | `Permission.Ruleset` array | `packages/schema/src/permission.ts:60-66`; `packages/core/src/permission.ts:102`; `packages/core/src/tool.ts:327,500` | `findLast` wildcard match; last matching rule wins. |
 | Agent tool visibility | Tool snapshot and `whollyDisabled` | `packages/core/src/tool.ts:327,500-506` | A tool is hidden only when the last matching action rule has resource `*` and effect `deny`; the `skill` tool is a visibility exception. |
 | Branch current | `ctx.vcs.get()` -> `data.branch.current` | `packages/plugin/src/promise/vcs.ts`; `packages/schema/src/vcs.ts:12-18` | Verified on a git location; handle non-git/errors as "no branch". |
@@ -396,7 +396,7 @@ All steps are individually guarded; a failure logs and disables only the affecte
 5. Register the `memoir` agent:
    - `mode: "subagent"`, `hidden: true`, name/description, `system` from `subagent-system.tmpl`.
    - `steps: 8`.
-   - `model` from `MEMOIR_AGENT_MODEL` only, parsed at the first slash; otherwise omit.
+   - no agent-level `model`; resolve the capture model per session from `MEMOIR_AGENT_MODEL`, then the completed session model, otherwise omit.
    - `request.body.temperature = 0` (provider-dependent; see risks) or omit.
    - Permissions:
      ```
@@ -551,7 +551,7 @@ type PendingCapture = {
 | Retry transient submission/branch failures once | V2's durable queue makes a transient failure worth one retry; V1 dropped them | Slightly more capture attempts; bounded by the same 2-attempt budget. |
 | One capture at a time per store | Removes branch races and the V1 drain/recheck protocol | Slight backlog latency; simpler correctness. |
 | Capture only user-facing (non-hidden, non-subagent) root sessions | V2 emits events for internal title/compaction agents and task children; avoids noisy/duplicate memories | If V1 captured general subagent turns, that incidental behavior is dropped. |
-| Drop `small_model`/`model` fallback | No plugin config read API | Use `MEMOIR_AGENT_MODEL` or the session default. This is usually the same default V1 chose. |
+| Drop `small_model`/`model` fallback | No plugin config read API | Use `MEMOIR_AGENT_MODEL`, then the active session model, then the native default. V1's cheap-model default is no longer implicit. |
 | Deny `memoir_memoir_forget` to the capture agent (recommended) | Prompt injection could delete memory; capture only needs add/read | One fewer Memoir tool in the capture agent; no intended functionality lost. |
 | Filter capture-agent tools to `memoir_*` + `doom_loop` | V2 shows `skill` despite deny-all; future tool leaks | Stronger visibility boundary; execution was already denied. |
 | Capture session carries metadata and is deleted after completion | Enables crash cleanup and orphan sweep | Slightly more metadata; no user-visible response. |
@@ -597,7 +597,7 @@ Acceptance: `/api/mcp` connected; fake model sees direct Memoir tools; `memoir-m
 ### Phase 3 - Agent, command, shell, context hook
 
 - Implement the V2 agent definition with V1 permissions plus the recommended forget deny.
-- Implement `MEMOIR_AGENT_MODEL` parsing and omit-model behavior.
+- Implement `MEMOIR_AGENT_MODEL` parsing, active-session model inheritance, and omit-model behavior.
 - Register `memoir:onboard` with `execute`.
 - Register the shell hook and the memoir-agent tool allowlist hook.
 - Unit tests for permission rule order, model parsing, prompt loading, tool filtering.
@@ -678,7 +678,7 @@ Use the V1 integration smoke pattern adapted to V2: temporary git project(s), is
 | Retry | Fake model returns 500 on the first capture request; exactly two requests with identical transcript; one memory; pending removed. |
 | Branch | New store checkout creates the project branch; capture stored on it; branch remains correct after a second capture. |
 | Permissions | Capture model request has only Memoir tools + `doom_loop`; checkout/forget/skill/execute absent; direct tool call to checkout is denied for the capture agent. |
-| Model | `MEMOIR_AGENT_MODEL=probe/fake2` makes the capture request use `fake2`; unset uses the session default. |
+| Model | `MEMOIR_AGENT_MODEL=probe/fake2` makes the capture request use `fake2`; unset uses the completed session's model, then the native default. |
 | Command | `memoir:onboard` executes and produces a prompt/response. |
 | Multi-location | A project2 turn is captured only by project2; project1 logs no capture; exactly one pending entry. |
 | Shared store | Two worktree/subdirectory locations use one `memoir-mcp` process and one store lock; captures serialize; branch matches each location. |
@@ -715,7 +715,7 @@ Use the V1 integration smoke pattern adapted to V2: temporary git project(s), is
 | External MCP checkout can race a capture | Medium | Design; V1 same | The plugin lock only covers plugin captures; read/confirm the branch immediately before capture; document. |
 | At-least-once duplicates after crash | Medium | Design | Memoir merge; idempotency not guaranteed; document. |
 | `temperature: 0` provider-specific | Low | [Source] | Omit or use request body; test model matrix. |
-| No `small_model`/`model` fallback | Medium | V2 API | `MEMOIR_AGENT_MODEL`; default model. Document. |
+| No `small_model`/`model` fallback | Medium | V2 API | `MEMOIR_AGENT_MODEL`; active session model; native default. Document. |
 | Child/subagent turns no longer captured | Low | Deliberate | Explain; can relax the `parentID` filter if review requires parity. |
 | Pending transcripts in local KV | Low | Design | Document local DB storage; TTL/cap; no logging of content. A single very large transcript is stored as-is; add a byte guard if KV limits appear. |
 | `memoir_memoir_forget` permission change | Low | Hardening | Optional; remove for strict parity. |
@@ -752,7 +752,7 @@ Environment:
 - `MEMOIR_STORE` - store override (also `options.store`).
 - `MEMOIR_AUTO_SAVE=0` - disable automatic capture.
 - `MEMOIR_CAPTURE_MIN_CHARS` - min transcript chars (default 16; `0` = any non-empty).
-- `MEMOIR_AGENT_MODEL` - `provider/model` for the capture agent.
+- `MEMOIR_AGENT_MODEL` - `provider/model[:variant]` capture override; otherwise the completed session model applies.
 - `MEMOIR_LOG` - unset = `$XDG_DATA_HOME/opencode/log/memoir/YYYY-MM-DD.log`; `stderr`; or a path.
 - `MEMOIR_DEBUG=1` - verbose errors/stacks.
 

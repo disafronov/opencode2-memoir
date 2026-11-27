@@ -111,6 +111,51 @@ test("local MCP, store, branch sync, capture, permissions, and cleanup", {
   }
 });
 
+test("capture inherits the active session model", { timeout: TIMEOUT }, async () => {
+  const model = await startFakeModel({ capturePath: "test.capture.model" });
+  let h: OpenCodeHarness | undefined;
+  try {
+    h = await startOpenCode({ modelUrl: model.url });
+    await waitForAdapter(h);
+    await waitForMain(h);
+
+    const sessionID = await h.createSession("model inheritance");
+    await h.switchModel(sessionID, { providerID: "probe", id: "alt" });
+    await h.prompt(sessionID, "hello from model inheritance");
+    await h.waitFor(() => h?.get("test.capture.model"), 60_000);
+    await h.waitFor(() => captureRequests(model).length >= 1);
+
+    assert.equal(captureRequests(model)[0]?.model, "alt");
+  } finally {
+    await dispose(h, model);
+  }
+});
+
+test("MEMOIR_AGENT_MODEL overrides the active session model", {
+  timeout: TIMEOUT,
+}, async () => {
+  const model = await startFakeModel({ capturePath: "test.capture.model.override" });
+  let h: OpenCodeHarness | undefined;
+  try {
+    h = await startOpenCode({
+      modelUrl: model.url,
+      env: { MEMOIR_AGENT_MODEL: "probe/fake" },
+    });
+    await waitForAdapter(h);
+    await waitForMain(h);
+
+    const sessionID = await h.createSession("model override");
+    await h.switchModel(sessionID, { providerID: "probe", id: "alt" });
+    await h.prompt(sessionID, "hello from model override");
+    await h.waitFor(() => h?.get("test.capture.model.override"), 60_000);
+    await h.waitFor(() => captureRequests(model).length >= 1);
+
+    assert.equal(captureRequests(model)[0]?.model, "fake");
+  } finally {
+    await dispose(h, model);
+  }
+});
+
 test("owns memoir: overrides user config, keeps unrelated servers, survives reload", {
   timeout: TIMEOUT,
 }, async () => {

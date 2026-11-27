@@ -183,6 +183,10 @@ export type OpenCodeHarness = {
   configPath: string;
   api: <T = unknown>(path: string, init?: RequestInit) => Promise<T>;
   createSession: (title: string) => Promise<string>;
+  switchModel: (
+    sessionID: string,
+    model: { id: string; providerID: string; variant?: string },
+  ) => Promise<void>;
   prompt: (sessionID: string, text: string) => Promise<void>;
   context: (sessionID: string) => Promise<Array<Record<string, unknown>>>;
   sessions: () => Promise<Array<Record<string, unknown>>>;
@@ -271,6 +275,7 @@ export async function startOpenCode(options: OpenCodeOptions): Promise<OpenCodeH
         options: { baseURL: options.modelUrl, apiKey: "local" },
         models: {
           fake: { name: "Fake", limit: { context: 32_000, output: 1024 } },
+          alt: { name: "Alt", limit: { context: 32_000, output: 1024 } },
         },
       },
     },
@@ -360,6 +365,17 @@ export async function startOpenCode(options: OpenCodeOptions): Promise<OpenCodeH
       body: JSON.stringify({ title }),
     });
     return result.data.id;
+  };
+
+  /** Switch an existing session to a different provider model. */
+  const switchModel = async (
+    sessionID: string,
+    model: { id: string; providerID: string; variant?: string },
+  ): Promise<void> => {
+    await api(`/api/session/${sessionID}/model`, {
+      method: "POST",
+      body: JSON.stringify({ model }),
+    });
   };
 
   const prompt = async (sessionID: string, text: string): Promise<void> => {
@@ -460,6 +476,7 @@ export async function startOpenCode(options: OpenCodeOptions): Promise<OpenCodeH
     configPath,
     api,
     createSession,
+    switchModel,
     prompt,
     context,
     sessions,

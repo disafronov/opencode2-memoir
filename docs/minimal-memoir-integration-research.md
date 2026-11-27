@@ -214,7 +214,7 @@ The follow-up experiments and decisions are integrated in A.7-A.10, C.1, E, F, a
 - Omitting `agent.model` uses the session default model; a capture session used the configured local model.
 - Setting `agent.model` explicitly overrides it.
 - There is no plugin config API for `small_model`/`model`; the V1 fallback chain cannot be preserved without reading config through an unsupported path.
-- The minimal plugin should not manage the capture model; the native agent/session model selection is the correct owner.
+- The capture model is resolved at capture time from `MEMOIR_AGENT_MODEL`, then from `session.model`; if neither is present, the model field is omitted and OpenCode's native default applies. This avoids the setup-time `ctx.model.default()` result, which was observed to be the free model rather than the configured one.
 - V1's `temperature: 0` is not expressible in the V2 agent schema without provider-specific request-body overrides. Omit it; a thin adapter should not depend on a provider-specific generation knob. This is a deliberate behavior change from V1.
 
 **Capture behavior**
@@ -452,12 +452,12 @@ The follow-up experiments and decisions are integrated in A.7-A.10, C.1, E, F, a
 | `MemoirBranchMatcher` | Serialize status/checkout, drain before switching | Store branch is global; V1 had concurrent captures | CLI sync + per-instance store lock + tool hook | **Replace** | Lock/no-lock experiment |
 | `src/capture-coordinator.ts` | Queue, dedupe, accepted/terminal states, retry, drain, shutdown | V1 promptAsync acceptance/completion race; branch ownership | One active capture; exact event ID; wait/outcome; no retry/persistence | **Remove** | Event ID/context/wait/interrupt |
 | `src/capture.ts` | Read last completed turn, min chars, dispatch, dedupe | V1 read messages at next user message; no exact execution id | Exact `event.id` -> idle; `session.context`; explicit `memoir_remember`; no min chars | **Simplify** | Context shape; exact idle |
-| `src/subagent.ts` | Agent config, permissions, model resolution, promptAsync | V1 agent + throwaway session | `agent.transform`, `session.create/prompt/wait/remove`; no model override | **Simplify** | Agent/session probes |
+| `src/subagent.ts` | Agent config, permissions, model resolution, promptAsync | V1 agent + throwaway session | `agent.transform`, `session.create/prompt/wait/remove`; capture model resolved from env then session | **Simplify** | Agent/session probes |
 | `src/prompts.ts` + `src/prompts/*.tmpl` | Custom capture and onboarding prompts | V1 had no upstream prompt reuse | Patched upstream `capture_coding.tmpl` and onboarding `SKILL.md` | **Replace** | Patch experiments |
 | `src/path.ts` | Store derivation, worktree/common dir, symlink-safe | Needed per-project Memoir store | Use `ctx.location.project.canonical` for project identity; keep slug/realpath and `MEMOIR_STORE`/option overrides; drop the git subprocess | **Simplify** | Worktree probe: `project.canonical` = main repo; non-git probe |
 | `src/debug.ts` | Always-on daily file log, debug stacks, project slug | Diagnose complex runtime/hook behavior | Minimal host error log; no custom file subsystem | **Remove/reduce** | Research scope |
 | `src/index.ts` hooks (`config`, `shell.env`, `chat.message`, `event`, `dispose`) | V1 lifecycle glue | V1 plugin API | `Plugin.define` setup, local MCP transform, agent/command, VCS/execution events, tool/session hooks, bounded cleanup | **Rewrite** | V2 API |
-| `MEMOIR_AGENT_MODEL` | Capture model override | V1 model fallback | Native model selection; no adapter override | **Remove** | A.4 |
+| `MEMOIR_AGENT_MODEL` | Capture model override | V1 model fallback | Explicit capture override ahead of active session model | **Retain** | A.4 |
 | V1 `temperature: 0` | Deterministic capture generation | V1 agent config | V2 agent has no portable temperature field; omit | **Remove** | A.4 |
 | `MEMOIR_CAPTURE_MIN_CHARS` | Avoid trivial captures | V1 local pre-filter | Upstream prompt's silent-default is the policy; remove local filter | **Remove** | Upstream prompt |
 | `MEMOIR_AUTO_SAVE` | Disable capture | Operational control | Keep only as an opt-out; branch sync/onboard remain active | **Retain (single check)** | V1 behavior |
@@ -633,7 +633,7 @@ Do not build:
 | Branch creation/checkout semantics | Memoir CLI | Invoke `memoir checkout -b`; do not define a new branch policy |
 | Store creation | Memoir CLI (`memoir new`) | Idempotent setup call |
 | Store path for the project/worktree | Adapter | Derive; pass to MCP and CLI |
-| Agent/session/model lifecycle | OpenCode | Create/prompt/wait/remove; no model override |
+| Agent/session/model lifecycle | OpenCode | Create/prompt/wait/remove; set the capture model from the explicit override or the completed session |
 | Tool permissions and visibility | OpenCode + adapter hook | Namespace-derived ruleset; exact capture-agent allowlist |
 | VCS branch monitoring | OpenCode | Subscribe to `vcs.branch.updated`; read `ctx.vcs.get` |
 | Branch synchronization | Adapter (because MCP checkout is broken) | CLI checkout with store lock; wait for active capture; coalesce; no interrupt |
@@ -891,7 +891,7 @@ None of these are prerequisites. The integration must work with current releases
 ### G.7 Configuration and state
 
 - Keep `MEMOIR_STORE` and `options.store`; keep `MEMOIR_AUTO_SAVE=0` as the capture opt-out (branch sync and onboarding remain).
-- Remove `MEMOIR_AGENT_MODEL`, `MEMOIR_CAPTURE_MIN_CHARS`, `MEMOIR_LOG`, the shell env hook, and the daily log.
+- Keep `MEMOIR_AGENT_MODEL` as the explicit capture override; remove `MEMOIR_CAPTURE_MIN_CHARS`, `MEMOIR_LOG`, the shell env hook, and the daily log.
 - Remove `syncedBranch`, status parsing, polling, and per-call checkout. Do not cache the actual Memoir branch.
 - State is limited to C.1's inventory, including the in-memory `syncMode` safety gate; no persistent failure state.
 - `protocol:"legacy"`, `codemode:false`, `cwd=store`, explicit store, `memoir new` before MCP.

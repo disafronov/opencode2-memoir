@@ -6,7 +6,7 @@ This plan implements Candidate A from `docs/minimal-memoir-integration-research.
 
 ## 1. Accepted architectural baseline
 
-- OpenCode owns the local Memoir MCP process, tool discovery, tool registry, sessions, model selection, permissions, VCS monitoring, and shutdown.
+- OpenCode owns the local Memoir MCP process, tool discovery, tool registry, sessions, model catalog and defaults, permissions, VCS monitoring, and shutdown. The adapter carries the completed session's selected model into capture unless an explicit override is set.
 - Memoir owns the store, branch semantics, memory storage/retrieval/classification/merge policies, MCP tool contracts, and the upstream prompt source.
 - The adapter owns only:
   - project store resolution;
@@ -321,7 +321,7 @@ Agent fields:
 - `mode: "subagent"`, `hidden: true`;
 - `system: captureSystemPrompt`;
 - no `steps` override; use native execution defaults;
-- no `model`;
+- no `model` on the agent; the per-capture model is resolved separately;
 - no temperature;
 - permissions in this exact order:
   - `{ action: "*", resource: "*", effect: "deny" }`
@@ -478,7 +478,7 @@ await withStoreLock(state, async () => {
   if generation/branch/provider changed from the captured snapshot: return
   if branch !== undefined:
     checkout recorded branch via CLI; failure => return
-  const session = await ctx.session.create({ title: "memoir:capture", agent: "memoir" })
+  const session = await ctx.session.create({ title: "memoir:capture", agent: "memoir", ...(model ? { model } : {}) })
   activeCapture.captureSessionID = session.id
   await ctx.session.prompt({ sessionID: session.id, text: transcript, delivery: "queue" })
   await ctx.session.wait({ sessionID: session.id })
@@ -619,7 +619,7 @@ All steps are guarded; a setup throw would disable the entire plugin, which is u
 5. **Create branch synchronization state**
    - `createBranchSync(state)`; no sync yet. This must exist before the command/guard closures and before the event loop.
 6. **Register capture agent**
-   - Permissions derived from `memoir_`; hidden subagent; no steps/model/temperature overrides; system prompt.
+   - Permissions derived from `memoir_`; hidden subagent; no steps/agent-model/temperature overrides; per-capture model resolution is separate; system prompt.
    - If it fails: log; capture disabled; branch sync continues.
 7. **Register onboarding command**
    - Add `memoir:onboard`; execute uses branch readiness; prompt.
@@ -838,7 +838,7 @@ No `syncedBranch`, no actual Memoir branch cache, no status parser, no persisten
 - Eligibility as section 3.4.
 - Exact idle; no fallback.
 - Transcript `[Human]/[Assistant]`; tool/reasoning excluded.
-- One active; no queue; no retry; no min chars; no model override.
+- One active; no queue; no retry; no min chars; model from `MEMOIR_AGENT_MODEL` -> completed session model -> native default.
 - Branch checkout failure => drop.
 - Wait; context audit; outcome policy.
 - Remove session; log removal failure.
@@ -867,7 +867,7 @@ Configuration surface:
 
 - `options.store` (higher priority) and `MEMOIR_STORE` for store override.
 - `MEMOIR_AUTO_SAVE=0` disables automatic capture only; branch synchronization and `/memoir:onboard` remain.
-- No `MEMOIR_AGENT_MODEL`, `MEMOIR_CAPTURE_MIN_CHARS`, `MEMOIR_LOG`, shell env hook, or custom log file.
+- `MEMOIR_AGENT_MODEL=provider/model[:variant]` overrides the capture model; otherwise the completed session model is used. No `MEMOIR_CAPTURE_MIN_CHARS`, `MEMOIR_LOG`, shell env hook, or custom log file.
 - No timeout, queue size, retry, or concurrency tuning options.
 - Build/test-only environment variables are not production settings.
 
@@ -877,7 +877,7 @@ README must cover:
 - plugin configuration with `plugins`;
 - store resolution and worktree behavior;
 - automatic branch synchronization and the wait-during-capture behavior;
-- best-effort capture, no persistence/retry;
+- best-effort capture, no persistence/retry, and capture model resolution;
 - `/memoir:onboard` and non-Git behavior;
 - unsupported same-store/different-branch concurrency;
 - manual/external Memoir checkout behavior;
