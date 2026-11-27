@@ -1,6 +1,7 @@
 import type { Plugin } from "@opencode/plugin";
 import { afterCapture, snapshot } from "./branch.js";
 import { MEMOIR_TOOL_PREFIX } from "./mcp.js";
+import { type CaptureModel, resolveCaptureModel } from "./model.js";
 import type { ActiveCapture, MemoirState } from "./state.js";
 import { deferred, withStoreLock } from "./state.js";
 import { checkoutBranch } from "./store.js";
@@ -162,6 +163,12 @@ export async function handleExecutionSucceeded(
   const session = await eligibleSession(ctx, sessionID);
   if (!session) return;
 
+  const captureModel = resolveCaptureModel(
+    process.env.MEMOIR_AGENT_MODEL,
+    session.model as CaptureModel | undefined,
+    (message) => console.error(`[memoir] ${message}`),
+  );
+
   const context = await ctx.session.context({ sessionID }).catch(() => undefined);
   if (!context) return;
 
@@ -190,7 +197,7 @@ export async function handleExecutionSucceeded(
   };
   state.activeCapture = capture;
 
-  void runCapture(ctx, state, capture, transcript)
+  void runCapture(ctx, state, capture, transcript, captureModel)
     .catch((error) => console.error("[memoir] capture failed", error))
     .finally(() => {
       if (state.activeCapture === capture) state.activeCapture = undefined;
@@ -203,6 +210,7 @@ async function runCapture(
   state: MemoirState,
   capture: ActiveCapture,
   transcript: string,
+  model: CaptureModel | undefined,
 ): Promise<void> {
   let sessionID: string | undefined;
   let outcome: string | undefined;
@@ -222,7 +230,11 @@ async function runCapture(
         if (checkout.code !== 0) return;
       }
 
-      const created = await ctx.session.create({ title: "memoir:capture", agent: "memoir" });
+      const created = await ctx.session.create({
+        title: "memoir:capture",
+        agent: "memoir",
+        ...(model ? { model } : {}),
+      });
       sessionID = created.id;
       capture.captureSessionID = created.id;
 

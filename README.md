@@ -101,6 +101,15 @@ adapter takes the conservative path and drops those captures.
 Set `MEMOIR_AUTO_SAVE=0` to disable automatic capture. Branch synchronization
 and `/memoir:onboard` remain available.
 
+### Capture model
+
+The hidden capture session inherits the model active in the completed session,
+including its variant. Set `MEMOIR_AGENT_MODEL=provider/model` (optionally
+`provider/model:variant`) to override that choice for capture only. A malformed
+override is reported and ignored, and the active session model is used instead.
+When neither source provides a model, OpenCode's native default is left in
+place. The hidden `memoir` agent itself has no model override.
+
 ## Onboarding
 
 Run the native command:
