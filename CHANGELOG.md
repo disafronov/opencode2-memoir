@@ -1,3 +1,9 @@
+## [1.1.0](https://github.com/disafronov/opencode2-memoir/compare/v1.0.1...v1.1.0) (2026-11-27)
+
+### Features
+
+* resolve capture model from session and env ([8b700fc](https://github.com/disafronov/opencode2-memoir/commit/8b700fc230e4137786b947b0ce3f9769b6fd10ac))
+
 ## [1.0.1](https://github.com/disafronov/opencode2-memoir/compare/v1.0.0...v1.0.1) (2026-11-27)
 
 ### Code Refactoring
