@@ -33,12 +33,6 @@ export type BranchState = {
 export type MemoirState = {
   ctx: Plugin.Context;
   storePath: string;
-  storeHash: string;
-  serverName?: string;
-  namespace?: string;
-  toolPrefix?: string;
-  mcpRegistered: boolean;
-  mcpSelected: boolean;
   mcpReady: boolean;
   onReady?: () => void;
   captureEnabled: boolean;
@@ -52,17 +46,10 @@ export type MemoirState = {
 };
 
 /** Create the one state object for a plugin setup. */
-export function createState(
-  ctx: Plugin.Context,
-  storePath: string,
-  storeHash: string,
-): MemoirState {
+export function createState(ctx: Plugin.Context, storePath: string): MemoirState {
   return {
     ctx,
     storePath,
-    storeHash,
-    mcpRegistered: false,
-    mcpSelected: false,
     mcpReady: false,
     captureEnabled: false,
     branchSyncEnabled: false,

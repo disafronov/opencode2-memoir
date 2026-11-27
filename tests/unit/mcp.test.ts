@@ -2,275 +2,157 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { Mcp, Plugin } from "@opencode/plugin";
 import {
+  MEMOIR_SERVER_NAME,
+  MEMOIR_TOOL_PREFIX,
   memoirConfig,
-  normalizeServerName,
   permissionRules,
   registerMemoirMcp,
-  sameMcpConfig,
-  selectServerName,
-  toolPrefix,
 } from "../../src/mcp.js";
 import { createState } from "../../src/state.js";
 
 type Editor = {
   list(): readonly [string, Mcp.ServerConfig][];
   get(name: string): Mcp.ServerConfig | undefined;
+  set(name: string, config: Mcp.ServerConfig): void;
 };
 
-function editor(entries: Record<string, Mcp.ServerConfig> = {}): Editor {
-  return {
-    list: () => Object.entries(entries),
-    get: (name) => entries[name],
+type TransformCapture = { callbacks: Array<(editor: Editor) => void> };
+
+function harness(entries: Record<string, Mcp.ServerConfig>): {
+  ctx: Plugin.Context;
+  entries: Record<string, Mcp.ServerConfig>;
+  transforms: TransformCapture;
+  applied: () => void;
+} {
+  const transforms: TransformCapture = { callbacks: [] };
+  const ctx = {
+    mcp: {
+      transform: async (callback: (editor: Editor) => void) => {
+        transforms.callbacks.push(callback);
+        callback({
+          list: () => Object.entries(entries),
+          get: (name) => entries[name],
+          set: (name, config) => {
+            entries[name] = config;
+          },
+        });
+        return { dispose: async () => undefined };
+      },
+      reload: async () => undefined,
+    },
+    location: {
+      directory: "/tmp/project",
+      project: { id: "p", directory: "/tmp/project", canonical: "/tmp/project" },
+    },
+    options: {},
+  } as unknown as Plugin.Context;
+  const applied = () => {
+    for (const callback of transforms.callbacks) {
+      callback({
+        list: () => Object.entries(entries),
+        get: (name) => entries[name],
+        set: (name, config) => {
+          entries[name] = config;
+        },
+      });
+    }
   };
+  return { ctx, entries, transforms, applied };
 }
 
-describe("MCP names", () => {
-  it("normalizes exactly like OpenCode", () => {
-    assert.equal(normalizeServerName("memoir.a"), "memoir_a");
-    assert.equal(normalizeServerName("memoir-a"), "memoir-a");
-    assert.equal(toolPrefix("memoir_plugin_abc"), "memoir_plugin_abc_");
+function testState(ctx: Plugin.Context) {
+  return createState(ctx, "/tmp/store");
+}
+
+describe("MCP ownership", () => {
+  it("uses the fixed memoir namespace and memoir_ tool prefix", () => {
+    assert.equal(MEMOIR_SERVER_NAME, "memoir");
+    assert.equal(MEMOIR_TOOL_PREFIX, "memoir_");
   });
 
-  it("uses a stable hash name and preserves unrelated servers", () => {
+  it("registers under the exact name memoir when no such server is configured", async () => {
+    const h = harness({});
+    await registerMemoirMcp(h.ctx, testState(h.ctx));
+    assert.deepEqual(h.entries.memoir, memoirConfig("/tmp/store"));
+  });
+
+  it("unconditionally overrides a user-defined memoir configuration", async () => {
+    const user: Mcp.ServerConfig = { type: "local", command: ["sleep", "60"], disabled: false };
+    const h = harness({ memoir: user });
+    await registerMemoirMcp(h.ctx, testState(h.ctx));
+    assert.deepEqual(h.entries.memoir, memoirConfig("/tmp/store"));
+    assert.notDeepEqual(h.entries.memoir, user);
+  });
+
+  it("does not modify unrelated MCP servers", async () => {
+    const other: Mcp.ServerConfig = { type: "remote", url: "http://127.0.0.1:1", codemode: false };
+    const local: Mcp.ServerConfig = { type: "local", command: ["sleep", "1"] };
+    const h = harness({ memoir: { type: "local", command: ["sleep", "60"] }, other, local });
+    await registerMemoirMcp(h.ctx, testState(h.ctx));
+    assert.deepEqual(h.entries.other, other);
+    assert.deepEqual(h.entries.local, local);
+  });
+
+  it("applies the configuration on every invocation, including reloads", async () => {
+    const h = harness({});
+    const state = testState(h.ctx);
+    await registerMemoirMcp(h.ctx, state);
     const desired = memoirConfig("/tmp/store");
-    const selected = selectServerName(
-      editor({ memoir: { type: "local", command: ["sleep", "1"] } }),
-      desired,
-      "abc123",
-    );
-    assert.equal(selected, "memoir_plugin_abc123");
+
+    // A user re-adds a conflicting memoir entry; a reload re-applies ours.
+    h.entries.memoir = { type: "local", command: ["sleep", "60"] };
+    h.applied();
+    assert.deepEqual(h.entries.memoir, desired);
+
+    // Our entry is removed; a reload restores it.
+    delete h.entries.memoir;
+    h.applied();
+    assert.deepEqual(h.entries.memoir, desired);
+
+    // Registering again on the same instance still applies unconditionally.
+    h.entries.memoir = { type: "remote", url: "http://127.0.0.1:1" };
+    await registerMemoirMcp(h.ctx, state);
+    assert.deepEqual(h.entries.memoir, desired);
   });
 
-  it("suffixes on an exact occupied different config", () => {
-    const desired = memoirConfig("/tmp/store");
-    const selected = selectServerName(
-      editor({
-        memoir_plugin_abc123: {
-          type: "local",
-          command: ["sleep", "1"],
-        },
-      }),
-      desired,
-      "abc123",
-    );
-    assert.equal(selected, "memoir_plugin_abc123_2");
-  });
-
-  it("suffixes on a normalized collision even when the exact name is free", () => {
-    const desired = memoirConfig("/tmp/store");
-    const selected = selectServerName(
-      editor({
-        "memoir.plugin.abc123": {
-          type: "local",
-          command: ["sleep", "1"],
-        },
-      }),
-      desired,
-      "abc123",
-    );
-    assert.equal(selected, "memoir_plugin_abc123_2");
-  });
-
-  it("reuses an exact identical config", () => {
-    const desired = memoirConfig("/tmp/store");
-    const selected = selectServerName(editor({ memoir_plugin_abc123: desired }), desired, "abc123");
-    assert.equal(selected, "memoir_plugin_abc123");
-    assert.equal(sameMcpConfig(desired, desired), true);
-  });
-
-  it("rejects an exact identical config when another server normalizes to the same namespace", () => {
-    const desired = memoirConfig("/tmp/store");
-    const selected = selectServerName(
-      editor({
-        memoir_plugin_abc123: desired,
-        "memoir.plugin.abc123": { type: "local", command: ["sleep", "1"] },
-      }),
-      desired,
-      "abc123",
-    );
-    assert.equal(selected, "memoir_plugin_abc123_2");
-  });
-
-  it("registers without overwriting unrelated servers and freezes the namespace", async () => {
-    const desired = memoirConfig("/tmp/store");
-    const entries: Record<string, Mcp.ServerConfig> = { memoir: desired };
-    const ctx = {
-      mcp: {
-        transform: async (
-          callback: (
-            editor: Editor & { set: (name: string, config: Mcp.ServerConfig) => void },
-          ) => void,
-        ) => {
-          const list = () => Object.entries(entries);
-          const get = (name: string) => entries[name];
-          const set = (name: string, config: Mcp.ServerConfig) => {
-            entries[name] = config;
-          };
-          callback({ list, get, set });
-          return { dispose: async () => undefined };
-        },
-        reload: async () => undefined,
-      },
-      location: {
-        directory: "/tmp/project",
-        project: { id: "p", directory: "/tmp/project", canonical: "/tmp/project" },
-      },
-      options: {},
-    } as unknown as Plugin.Context;
-    const value = createState(ctx, "/tmp/store", "abc123");
-    await registerMemoirMcp(ctx, value);
-    assert.equal(value.serverName, "memoir_plugin_abc123");
-    assert.equal(value.namespace, "memoir_plugin_abc123");
-    assert.equal(value.toolPrefix, "memoir_plugin_abc123_");
-    assert.equal(value.mcpRegistered, true);
-    assert.ok(entries.memoir);
-    assert.ok(entries.memoir_plugin_abc123);
-  });
-
-  it("does not rename a frozen registration when a later transform collides", async () => {
-    const entries: Record<string, Mcp.ServerConfig> = {};
-    const ctx = {
-      mcp: {
-        transform: async (
-          callback: (
-            editor: Editor & { set: (name: string, config: Mcp.ServerConfig) => void },
-          ) => void,
-        ) => {
-          callback({
-            list: () => Object.entries(entries),
-            get: (name) => entries[name],
-            set: (name, config) => {
-              entries[name] = config;
-            },
-          });
-          return { dispose: async () => undefined };
-        },
-      },
-      location: {
-        directory: "/tmp/project",
-        project: { id: "p", directory: "/tmp/project", canonical: "/tmp/project" },
-      },
-      options: {},
-    } as unknown as Plugin.Context;
-    const value = createState(ctx, "/tmp/store", "abc123");
-    await registerMemoirMcp(ctx, value);
-    assert.equal(value.serverName, "memoir_plugin_abc123");
-    assert.equal(value.mcpSelected, true);
-
-    entries.memoir_plugin_abc123 = { type: "local", command: ["sleep", "1"] };
-    await registerMemoirMcp(ctx, value);
-    assert.equal(value.serverName, "memoir_plugin_abc123");
-    assert.equal(value.mcpRegistered, false);
-    assert.equal(value.mcpReady, false);
-    assert.deepEqual(entries.memoir_plugin_abc123.command, ["sleep", "1"]);
-
-    // A later transform must not select a new name after the frozen one is lost.
-    await registerMemoirMcp(ctx, value);
-    assert.equal(value.serverName, "memoir_plugin_abc123");
-    assert.equal(value.mcpRegistered, false);
-  });
-
-  it("disables a frozen registration when a later server normalizes to the same namespace", async () => {
-    const entries: Record<string, Mcp.ServerConfig> = {};
-    const ctx = {
-      mcp: {
-        transform: async (
-          callback: (
-            editor: Editor & { set: (name: string, config: Mcp.ServerConfig) => void },
-          ) => void,
-        ) => {
-          callback({
-            list: () => Object.entries(entries),
-            get: (name) => entries[name],
-            set: (name, config) => {
-              entries[name] = config;
-            },
-          });
-          return { dispose: async () => undefined };
-        },
-      },
-      location: {
-        directory: "/tmp/project",
-        project: { id: "p", directory: "/tmp/project", canonical: "/tmp/project" },
-      },
-      options: {},
-    } as unknown as Plugin.Context;
-    const value = createState(ctx, "/tmp/store", "abc123");
-    await registerMemoirMcp(ctx, value);
-    assert.equal(value.serverName, "memoir_plugin_abc123");
-
-    entries["memoir.plugin.abc123"] = { type: "local", command: ["sleep", "1"] };
-    await registerMemoirMcp(ctx, value);
-    assert.equal(value.mcpRegistered, false);
-    assert.equal(value.mcpReady, false);
-    assert.equal(value.serverName, "memoir_plugin_abc123");
-  });
-
-  it("resolves an occupied base name with a suffix and updates the namespace", async () => {
-    const entries: Record<string, Mcp.ServerConfig> = {
-      memoir_plugin_abc123: { type: "local", command: ["sleep", "1"] },
+  it("marks MCP ready on every applied transform", async () => {
+    const h = harness({});
+    const state = testState(h.ctx);
+    let readyCalls = 0;
+    state.onReady = () => {
+      readyCalls++;
     };
-    const ctx = {
-      mcp: {
-        transform: async (
-          callback: (
-            editor: Editor & { set: (name: string, config: Mcp.ServerConfig) => void },
-          ) => void,
-        ) => {
-          const list = () => Object.entries(entries);
-          const get = (name: string) => entries[name];
-          const set = (name: string, config: Mcp.ServerConfig) => {
-            entries[name] = config;
-          };
-          callback({ list, get, set });
-          return { dispose: async () => undefined };
-        },
-        reload: async () => undefined,
-      },
-      location: {
-        directory: "/tmp/project",
-        project: { id: "p", directory: "/tmp/project", canonical: "/tmp/project" },
-      },
-      options: {},
-    } as unknown as Plugin.Context;
-    const value = createState(ctx, "/tmp/store", "abc123");
-    await registerMemoirMcp(ctx, value);
-    assert.equal(value.serverName, "memoir_plugin_abc123_2");
-    assert.equal(value.namespace, "memoir_plugin_abc123_2");
-    assert.equal(value.toolPrefix, "memoir_plugin_abc123_");
-    assert.ok(entries.memoir_plugin_abc123);
-    assert.ok(entries.memoir_plugin_abc123_2);
+    assert.equal(state.mcpReady, false);
+    await registerMemoirMcp(h.ctx, state);
+    assert.equal(state.mcpReady, true);
+    const before = readyCalls;
+    h.applied();
+    assert.ok(readyCalls > before);
   });
+});
 
-  it("does not consider a remote or altered local config identical", () => {
-    const desired = memoirConfig("/tmp/store");
-    assert.equal(
-      sameMcpConfig({ type: "remote", url: "http://127.0.0.1:1", codemode: false }, desired),
-      false,
-    );
-    assert.equal(
-      sameMcpConfig(
-        {
-          ...desired,
-          type: "local",
-          command: ["memoir-mcp", "--store", "/tmp/other"],
-          cwd: "/tmp/other",
-        },
-        desired,
-      ),
-      false,
-    );
+describe("memoirConfig", () => {
+  it("is a disabled-protocol local memoir-mcp server for the store", () => {
+    assert.deepEqual(memoirConfig("/tmp/store"), {
+      type: "local",
+      command: ["memoir-mcp", "--store", "/tmp/store"],
+      cwd: "/tmp/store",
+      environment: { MEMOIR_STORE: "/tmp/store" },
+      codemode: false,
+      protocol: "legacy",
+      disabled: false,
+    });
   });
 });
 
 describe("capture permissions", () => {
-  it("uses deny-all, doom-loop, namespace allow, then checkout/forget denies", () => {
-    assert.deepEqual(permissionRules("memoir_plugin_x_"), [
+  it("uses deny-all, doom-loop, memoir_ allow, then checkout/forget denies", () => {
+    assert.deepEqual(permissionRules(), [
       { action: "*", resource: "*", effect: "deny" },
       { action: "doom_loop", resource: "*", effect: "allow" },
-      { action: "memoir_plugin_x_*", resource: "*", effect: "allow" },
-      { action: "memoir_plugin_x_*memoir_forget", resource: "*", effect: "deny" },
-      { action: "memoir_plugin_x_*memoir_checkout", resource: "*", effect: "deny" },
+      { action: "memoir_*", resource: "*", effect: "allow" },
+      { action: "memoir_*memoir_forget", resource: "*", effect: "deny" },
+      { action: "memoir_*memoir_checkout", resource: "*", effect: "deny" },
     ]);
   });
 });

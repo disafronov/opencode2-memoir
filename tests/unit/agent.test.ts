@@ -14,37 +14,29 @@ function state() {
       options: {},
     } as unknown as Plugin.Context,
     "/tmp",
-    "hash",
   );
-  value.namespace = "memoir_plugin_x";
-  value.serverName = "memoir_plugin_x";
   value.branchSyncEnabled = true;
   value.onboardEnabled = true;
   return value;
 }
 
 describe("capture tool filter", () => {
-  it("keeps only the selected Memoir namespace (minus checkout/forget) and doom_loop", async () => {
-    const value = state();
+  it("keeps only the memoir namespace (minus checkout/forget) and doom_loop", async () => {
     let callback: ((event: unknown) => Promise<void>) | undefined;
     const ctx = {
       tool: {
         list: async () => [
           {
-            id: "memoir_plugin_x_memoir_remember",
+            id: "memoir_memoir_remember",
             name: "memoir_remember",
-            options: { namespace: "memoir_plugin_x" },
+            options: { namespace: "memoir" },
           },
           {
-            id: "memoir_plugin_x_memoir_checkout",
+            id: "memoir_memoir_checkout",
             name: "memoir_checkout",
-            options: { namespace: "memoir_plugin_x" },
+            options: { namespace: "memoir" },
           },
-          {
-            id: "memoir_plugin_x_memoir_forget",
-            name: "memoir_forget",
-            options: { namespace: "memoir_plugin_x" },
-          },
+          { id: "memoir_memoir_forget", name: "memoir_forget", options: { namespace: "memoir" } },
           { id: "doom_loop", name: "doom_loop" },
           { id: "skill", name: "skill" },
           {
@@ -53,9 +45,9 @@ describe("capture tool filter", () => {
             options: { namespace: "memoir_other" },
           },
           {
-            id: "memoir_plugin_x_evil_memoir_remember",
+            id: "memoir_evil_memoir_remember",
             name: "memoir_remember",
-            options: { namespace: "memoir_plugin_x_evil" },
+            options: { namespace: "memoir_evil" },
           },
         ],
       },
@@ -66,22 +58,22 @@ describe("capture tool filter", () => {
         },
       },
     } as unknown as Plugin.Context;
-    await registerCaptureToolFilter(ctx, value);
+    await registerCaptureToolFilter(ctx);
     assert.ok(callback);
     const event = {
       agent: "memoir",
       tools: {
-        memoir_plugin_x_memoir_remember: {},
-        memoir_plugin_x_memoir_checkout: {},
-        memoir_plugin_x_memoir_forget: {},
+        memoir_memoir_remember: {},
+        memoir_memoir_checkout: {},
+        memoir_memoir_forget: {},
         doom_loop: {},
         skill: {},
         memoir_other_memoir_remember: {},
-        memoir_plugin_x_evil_memoir_remember: {},
+        memoir_evil_memoir_remember: {},
       },
     };
     await callback(event);
-    assert.deepEqual(Object.keys(event.tools), ["memoir_plugin_x_memoir_remember", "doom_loop"]);
+    assert.deepEqual(Object.keys(event.tools), ["memoir_memoir_remember", "doom_loop"]);
   });
 });
 
@@ -113,7 +105,7 @@ describe("onboarding command", () => {
     } as unknown as CommandInvocation);
     assert.equal(delivered?.sessionID, "ses_parent");
     assert.match(delivered?.text ?? "", /ONBOARD PROMPT/);
-    assert.match(delivered?.text ?? "", /Selected Memoir MCP server: memoir_plugin_x/);
+    assert.match(delivered?.text ?? "", /Selected Memoir MCP server: memoir/);
     assert.match(delivered?.text ?? "", /--force/);
     assert.equal(delivered?.delivery, "queue");
   });

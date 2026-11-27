@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import type { Plugin } from "@opencode/plugin";
-import { ensureStore, hashStore, resolveStore, runMemoir, slug } from "../../src/store.js";
+import { ensureStore, resolveStore, runMemoir, slug } from "../../src/store.js";
 import { type FakeMemoir, installFakeMemoir } from "./fake-cli.js";
 
 let fake: FakeMemoir | undefined;
@@ -23,12 +23,6 @@ function ctxFor(canonical: string, options: Record<string, unknown> = {}): Plugi
 describe("store identity", () => {
   it("slug replaces only slash and dot", () => {
     assert.equal(slug("/home/me/.memoir"), "-home-me--memoir");
-  });
-
-  it("hash is stable and 16 hex characters", () => {
-    const first = hashStore("/tmp/project");
-    assert.equal(first, hashStore("/tmp/project"));
-    assert.match(first, /^[0-9a-f]{16}$/);
   });
 
   it("option override wins over env", async () => {

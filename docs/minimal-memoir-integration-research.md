@@ -122,9 +122,9 @@ The follow-up experiments and decisions are integrated in A.7-A.10, C.1, E, F, a
   - Session context hook: resolve the Memoir namespace tools from `ctx.tool.list()`, remove everything else, and remove the checkout/forget raw names.
 - The context hook is narrow: it only mutates `event.tools` when `event.agent === "memoir"`. It does not modify unrelated agents.
 
-**No fixed prefix assumption**
-- The adapter registers a server name it owns (e.g. `memoir`), but it does not hardcode the effective `memoir_memoir_*` ids. It filters by `options.namespace` and raw tool name, and derives the permission wildcard from the resolved namespace.
-- A user-configured MCP server with a different name is not consumed or renamed. If a user already has a server named `memoir`, the adapter should either own that name explicitly or decline to replace it; this is a configuration decision (see G).
+**Fixed prefix ownership**
+- The adapter owns `memoir`: it always registers `memoir`, uses the fixed `memoir_` effective prefix, and does not hardcode individual effective ids; it filters by `options.namespace === "memoir"` and raw tool name.
+- A user-configured MCP server with a different name is not consumed or renamed. A user-defined `memoir` server is overridden at runtime by the plugin while installed; the original configuration is effective without the plugin (see G).
 
 **Tool execution hook** [Verified]
 - `ctx.tool.hook("execute.before", ...)` fires for MCP tools. The event includes `tool` (effective id), `info` (with `options.namespace`), `sessionID`, `agent`, `messageID`, `id`, and `input`.
@@ -381,36 +381,21 @@ The follow-up experiments and decisions are integrated in A.7-A.10, C.1, E, F, a
 - The store path remains `~/.memoir/<slug(canonical)>` unless overridden.
 - Set the local MCP server `cwd` to the store path; create it first with `memoir new`.
 
-### A.9 Collision-safe MCP registration
+### A.9 MCP registration and ownership
 
 **Source:** the MCP editor exposes `list`, `get`, `set`, `update`, `remove` (`packages/plugin/src/promise/mcp.ts`). `normalizedName` preserves `[A-Za-z0-9_-]` and replaces other characters with `_`; `effectiveName` is `${normalizedNamespace}_${normalizedToolName}` (`packages/core/src/tool/runtime.ts:300-305`).
 
-**Verified:** with user-configured servers named `memoir`, `memoir-a`, and `memoir_a` (all invalid `sleep` servers), the adapter inspected `editor.list()`/`editor.get()`, preserved all three, registered `memoir_plugin_f03840ae49`, and that server connected with tools:
-- `memoir_plugin_f03840ae49_memoir_branches`
-- `..._memoir_commits`
-- `..._memoir_forget`
-- `..._memoir_get`
-- `..._memoir_recall`
-- `..._memoir_remember`
-- `..._memoir_status`
-- `..._memoir_summarize`
-- `..._memoir_checkout`
+**Verified:** the MCP editor exposes `list`, `get`, `set`, `update`, `remove`; `normalizedName` preserves `[A-Za-z0-9_-]` and replaces other characters with `_`; `effectiveName` is `${normalizedNamespace}_${normalizedToolName}`. A connected `memoir` server exposes `memoir_memoir_branches`, `memoir_memoir_commits`, `memoir_memoir_forget`, `memoir_memoir_get`, `memoir_memoir_recall`, `memoir_memoir_remember`, `memoir_memoir_status`, `memoir_memoir_summarize`, `memoir_memoir_checkout`.
 
-The user `memoir` server remained present; nothing was overwritten.
+**Ownership rule (implementation):**
 
-**Selection rule (implementation refinement):**
+1. Always register under the exact name `memoir`; fixed namespace `memoir`; fixed effective tool prefix `memoir_`.
+2. On every `ctx.mcp.transform` invocation, including reloads, `editor.set("memoir", config)` unconditionally, overriding any user-defined `memoir` configuration in memory. No store hashing for MCP naming; no generated names or numeric suffixes; no collision detection/resolution; no existing-config comparison or reuse; no dynamic namespace selection.
+3. Never modify user configuration files; never modify unrelated MCP servers. When the plugin is absent, OpenCode uses the original user-defined configuration normally.
+4. Permissions use `memoir_*`; checkout/forget denied last. Filter tools by `options.namespace === "memoir"` and raw names at request time.
+5. Prompts refer to Memoir **tool roles** ("the Memoir remember tool"), never raw/effective tool IDs; onboarding names `memoir` as the selected server.
 
-1. In one `ctx.mcp.transform`, read `editor.list()` and `editor.get()`.
-2. Choose `memoir_plugin_<hash>` always, where hash is a stable hash of the canonical store path; this preserves the adapter's registration identity even if a user later adds a server named `memoir`. Check the normalized name; append `_2`, `_3` only on an actual collision. Reuse the same name/config on reload.
-3. `editor.set(chosen, config)` only; never modify another server.
-4. Derive the capture-agent namespace and permission prefix from `chosen`, then filter tools by `options.namespace` and raw names at request time.
-5. Because the namespace is runtime-selected, prompts refer to Memoir **tool roles** ("the Memoir remember tool"), never to raw or effective tool IDs. The capture agent sees only its namespace; the onboarding prompt includes the selected server name at runtime to disambiguate a user-owned `memoir` server.
-
-The earlier `memoir`-if-free heuristic is not used: a later user registration under `memoir` would change the adapter's namespace and break permission/prompt identity. The plan chooses the stable hash name unconditionally.
-
-**Normalization collision:** `memoir.a` and `memoir_a` both normalize to `memoir_a` (dots/other characters become `_`; hyphens are preserved). The check must use OpenCode's exact normalization, not a hyphen-collapsing custom one. Distinct server/tool pairs can theoretically produce the same effective tool id (for example namespace `memoir` + tool `memoir_status` and namespace `memoir_memoir` + tool `status`); a long adapter hash makes this practically impossible. The adapter does not need a general MCP discovery/reuse mechanism or a catalog-wide collision resolver.
-
-**Dynamic catalog and reload:** the context hook re-reads `ctx.tool.list()` per request; a Memoir tool addition/removal needs no agent-permission reload. The setup chooses the stable hash name once and stores it with the namespace/permissions. The transform reuses that exact name/config; an existing identical config is reused, so reload does not create a duplicate. If a user later takes the chosen name with a different config, the transform must **not overwrite** it: log and skip registration for this instance; namespace/permissions remain stable. A later plugin setup may choose a new suffix. This is a configuration-change edge, not a routine path and not a general manager.
+**Dynamic catalog and reload:** the context hook re-reads `ctx.tool.list()` per request; a Memoir tool addition/removal needs no agent-permission reload. The transform re-applies the full `memoir` configuration on every invocation, so reload does not create a duplicate and a user-added conflicting `memoir` entry is re-overridden.
 
 ### A.10 Lifecycle and capture eligibility
 
@@ -503,7 +488,7 @@ Location setup
   store = deriveStorePath(ctx.location.project.canonical)
   memoir new <store>                    # only if <store>/.git is absent; store exists before MCP cwd
   mcp.transform:
-    choose and freeze memoir_plugin_<hash> (suffix only on a normalized collision)
+    always register `memoir` (fixed namespace, memoir_ prefix; unconditional editor.set on every transform)
     local memoir-mcp, cwd=store, MEMOIR_STORE, --store,
     codemode=false, protocol=legacy
   agent.transform: hidden "memoir", steps 8, namespace-derived permissions
@@ -927,12 +912,11 @@ None of these are prerequisites. The integration must work with current releases
 
 ### G.10 MCP registration name
 
-- **Decision:** collision-safe adapter-owned registration, not overwrite.
-- Inspect `editor.list()`/`editor.get()` in `ctx.mcp.transform`.
-- Use `memoir_plugin_<canonical-store-hash>` always; suffix only on an actual normalized-name collision. This retains the selected identity across reloads and avoids a later user `memoir` registration displacing it.
-- Preserve all other servers; verified with user `memoir`, `memoir-a`, `memoir_a`.
-- Derive namespace from the chosen name; filter by `options.namespace` and raw names; dynamic catalog. The setup name is then frozen for the instance; the transform does not rename.
-- Use OpenCode's exact normalization (hyphens preserved; dots/other -> `_`); check normalized names. A long hash mitigates theoretical server/tool id collisions.
+- **Decision:** authoritative `memoir` ownership, no collision handling.
+- Always register under the exact name `memoir`; fixed namespace `memoir`; fixed effective tool prefix `memoir_`.
+- On every `ctx.mcp.transform` invocation, including reloads, `editor.set("memoir", config)` unconditionally, overriding any user-defined `memoir` configuration in memory.
+- Do not modify user configuration files; preserve all unrelated servers; when the plugin is absent, the original user-defined configuration is effective.
+- Filter by `options.namespace === "memoir"` and raw names; dynamic catalog.
 - Deterministic name + config equality makes reload idempotent; no storage key required.
 - Do not generalize to discovery/reuse of arbitrary user Memoir servers.
 
@@ -978,7 +962,7 @@ No additional subsystem is required.
 
 These findings refine the architecture, not replace it.
 
-- **MCP transform timing:** `ctx.mcp.transform` callbacks can be applied after `setup()` returns. The selected namespace must be fixed synchronously before the capture agent, context filter, and tool guard are registered. The implementation reserves `memoir_plugin_<storeHash>` immediately, and the transform callback resolves a normalized collision with a `_2` suffix, updating `state.namespace`; the stable base tool prefix still matches the suffixed effective IDs. Capture and onboarding are enabled only after this callback confirms the actual selected namespace (`mcpReady`/`onReady`); branch sync may start earlier. `ctx.mcp.reload()` does not guarantee the callback has run before setup continues; it is not a setup barrier.
+- **MCP transform timing:** `ctx.mcp.transform` callbacks can be applied after `setup()` returns. The fixed `memoir` name and `memoir_` prefix need no synchronous reservation; the callback unconditionally sets `memoir`, re-applied on every transform, including reloads. Capture and onboarding are enabled only after this callback confirms the `memoir` registration (`mcpReady`/`onReady`); branch sync may start earlier. `ctx.mcp.reload()` does not guarantee the callback has run before setup continues; it is not a setup barrier.
 - **Store creation:** `memoir new` is not idempotent for a store with commits. The adapter checks `<store>/.git` and skips reinitialization, matching Memoir MCP's own `ensure_store` behavior.
 - **Non-Git capture:** the public `SessionInfo.location` lacks a workspace/confirmed-non-Git marker and an empty VCS state is indistinguishable from an uninitialized Git repository at capture time. The adapter conservatively drops both. This is a documented limitation; no Git detector is added.
 
@@ -1171,13 +1155,14 @@ branch events/captures.
 
 `project.canonical` replaces the V1 Git common-directory subprocess for these cases.
 
-### 14. Collision-safe MCP registration
+### 14. MCP registration and ownership
 
-User servers `memoir`, `memoir-a`, `memoir_a` were preserved; the adapter registered
-`memoir_plugin_f03840ae49`; that server connected; Memoir tools used the chosen namespace. No
-user server was overwritten. `normalizedName` preserves `-`/`_` and replaces dots/other
-characters; `memoir.a` and `memoir_a` would normalize the same, so collision checks must use the
-exact OpenCode normalization.
+The adapter owns `memoir`: it always registers `memoir`, uses fixed namespace `memoir` and
+`memoir_` prefix, and unconditionally `editor.set("memoir", config)` on every transform,
+including reloads, overriding a user-defined `memoir`. Unrelated servers are untouched; user
+configuration files are not modified; without the plugin the original configuration is effective.
+`normalizedName` preserves `-`/`_` and replaces dots/other characters, but no normalized-name
+collision checking is performed.
 
 ### 15. Plugin reload with an active capture
 

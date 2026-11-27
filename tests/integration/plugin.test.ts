@@ -1,10 +1,9 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { rm } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { promisify } from "node:util";
-import { hashStore, safeRealpath } from "../../src/store.js";
 import {
   type FakeModel,
   installAmbiguousMcp,
@@ -22,18 +21,11 @@ async function waitForAdapter(h: OpenCodeHarness): Promise<Record<string, unknow
     const servers = await h.mcp();
     return servers.some(
       (server) =>
-        String(server.name).startsWith("memoir_plugin_") &&
+        server.name === "memoir" &&
         (server.status as { status?: string } | undefined)?.status === "connected",
     );
   });
-  const servers = (await h.mcp())
-    .filter(
-      (item) =>
-        String(item.name).startsWith("memoir_plugin_") &&
-        (item.status as { status?: string } | undefined)?.status === "connected",
-    )
-    .sort((left, right) => String(left.name).localeCompare(String(right.name)));
-  const server = servers.at(-1);
+  const server = (await h.mcp()).find((item) => item.name === "memoir");
   assert.ok(server, "adapter MCP server not found");
   return server;
 }
@@ -72,17 +64,8 @@ test("local MCP, store, branch sync, capture, permissions, and cleanup", {
     h = await startOpenCode({ modelUrl: model.url, userMcp: true });
     const adapter = await waitForAdapter(h);
     const adapterName = String(adapter.name);
-    const prefix = `${adapterName}_`;
-
-    const servers = await h.mcp();
-    assert.ok(
-      servers.some((server) => server.name === "memoir"),
-      "user-configured memoir server was not preserved",
-    );
-    assert.ok(
-      servers.some((server) => String(server.name).startsWith("memoir_plugin_")),
-      "adapter-owned MCP server is missing",
-    );
+    const prefix = "memoir_";
+    assert.equal(adapterName, "memoir");
 
     const agents = await h.agents();
     const memoirAgent = agents.find((agent) => agent.name === "memoir" || agent.id === "memoir");
@@ -128,47 +111,113 @@ test("local MCP, store, branch sync, capture, permissions, and cleanup", {
   }
 });
 
-test("resolves an adapter-name collision without touching user servers", {
+test("owns memoir: overrides user config, keeps unrelated servers, survives reload", {
   timeout: TIMEOUT,
 }, async () => {
-  const model = await startFakeModel({ capturePath: "test.capture.collision" });
+  const model = await startFakeModel({ capturePath: "test.capture.ownership" });
   let h: OpenCodeHarness | undefined;
   try {
     h = await startOpenCode({
       modelUrl: model.url,
       userMcp: true,
-      collideWithAdapter: true,
+      unrelatedMcp: true,
     });
-    const adapter = await waitForAdapter(h);
-    const adapterName = String(adapter.name);
-    const base = `memoir_plugin_${hashStore(safeRealpath(h.store))}`;
-    const servers = await h.mcp();
-    assert.notEqual(adapterName, base);
-    assert.ok(servers.some((server) => server.name === "memoir"));
-    assert.ok(servers.some((server) => server.name === base));
-    assert.ok(servers.some((server) => server.name === adapterName));
+    await waitForAdapter(h);
 
+    // The plugin registers `memoir`; a user-defined `memoir` cannot connect.
+    const servers = await h.mcp();
+    assert.equal(servers.filter((server) => server.name === "memoir").length, 1);
+    assert.ok(
+      servers.some((server) => server.name === "other"),
+      "unrelated MCP server was removed",
+    );
+    assert.ok(
+      !servers.some((server) => String(server.name).startsWith("memoir_plugin_")),
+      "adapter-owned hashed MCP server name remains",
+    );
+
+    // Fixed namespace and memoir_ prefix drive capture-agent permissions.
     const agents = await h.agents();
     const memoirAgent = agents.find((agent) => agent.name === "memoir" || agent.id === "memoir");
     assert.ok(memoirAgent);
     const rules = memoirAgent.permissions as Array<{ action: string; effect: string }>;
-    assert.ok(rules.some((rule) => rule.action === `${base}_*` && rule.effect === "allow"));
+    assert.ok(rules.some((rule) => rule.action === "memoir_*" && rule.effect === "allow"));
     assert.ok(
-      rules.some((rule) => rule.action === `${base}_*memoir_checkout` && rule.effect === "deny"),
+      rules.some((rule) => rule.action === "memoir_*memoir_checkout" && rule.effect === "deny"),
     );
     assert.ok(
-      rules.some((rule) => rule.action === `${base}_*memoir_forget` && rule.effect === "deny"),
+      rules.some((rule) => rule.action === "memoir_*memoir_forget" && rule.effect === "deny"),
     );
+    assert.ok(rules.some((rule) => rule.action === "*" && rule.effect === "deny"));
 
-    const sessionID = await h.createSession("collision");
-    await h.prompt(sessionID, "collision capture turn");
-    await h.waitFor(() => h?.get("test.capture.collision"), 60_000);
-    const capture = captureStarts(model)[0];
-    assert.ok(capture);
-    for (const name of capture.toolNames) {
-      const allowed = name === "doom_loop" || name.startsWith(`${adapterName}_`);
-      assert.ok(allowed, `capture agent received a non-selected tool: ${name}`);
-    }
+    // User configuration files are not modified.
+    const configPath = h.configPath;
+    const before = await readFile(configPath, "utf8");
+
+    // A runtime re-add of a conflicting `memoir` server is overridden on reload.
+    await h.api(`/api/experimental/mcp/memoir`, {
+      method: "PUT",
+      body: JSON.stringify({
+        config: { type: "local", command: ["sleep", "60"], disabled: false },
+      }),
+    });
+    await waitForAdapter(h);
+    const after = await h.mcp();
+    assert.equal(after.filter((server) => server.name === "memoir").length, 1);
+    assert.ok(
+      after.some((server) => server.name === "other"),
+      "unrelated server changed on reload",
+    );
+    assert.equal(await readFile(configPath, "utf8"), before, "user config file was modified");
+
+    // Capture still works against the owned memoir server.
+    await waitForMain(h);
+    const sessionID = await h.createSession("ownership");
+    await h.prompt(sessionID, "ownership capture turn");
+    await h.waitFor(() => h?.get("test.capture.ownership"), 60_000);
+
+    // Onboarding remains available.
+    const commands = await h.commands();
+    assert.ok(commands.some((command) => command.name === "memoir:onboard"));
+
+    const onboardSession = await h.createSession("onboarding");
+    const requestsBefore = model.requests.length;
+    await h.api(`/api/session/${onboardSession}/command`, {
+      method: "POST",
+      body: JSON.stringify({ name: "memoir:onboard", text: "" }),
+    });
+    await h.waitFor(() => model.requests.length > requestsBefore);
+    const delivered = model.requests
+      .slice(requestsBefore)
+      .map((request) => request.texts)
+      .join("\n");
+    assert.match(delivered, /Selected Memoir MCP server: memoir/);
+    assert.match(delivered, /codebase:onboard/);
+  } finally {
+    await dispose(h, model);
+  }
+});
+
+test("without the plugin, a user-defined memoir configuration is effective", {
+  timeout: TIMEOUT,
+}, async () => {
+  const model = await startFakeModel();
+  let h: OpenCodeHarness | undefined;
+  try {
+    h = await startOpenCode({
+      modelUrl: model.url,
+      userMcp: true,
+      unrelatedMcp: true,
+      withPlugin: false,
+    });
+    await h.waitFor(async () => (await h.mcp()).some((server) => server.name === "memoir"));
+    const servers = await h.mcp();
+    const memoir = servers.find((server) => server.name === "memoir");
+    assert.ok(memoir, "user-defined memoir server missing");
+    // The user's `sleep 60` server is not Memoir MCP; it must not be connected.
+    assert.notEqual((memoir.status as { status?: string } | undefined)?.status, "connected");
+    assert.ok(servers.some((server) => server.name === "other"));
+    assert.ok(!servers.some((server) => String(server.name).startsWith("memoir_plugin_")));
   } finally {
     await dispose(h, model);
   }

@@ -1,5 +1,4 @@
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
 import { existsSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -20,11 +19,6 @@ export function safeRealpath(path: string): string {
 /** Turn an absolute project path into a stable filesystem-safe store name. */
 export function slug(path: string): string {
   return path.replace(/[/.]/g, "-");
-}
-
-/** Stable short hash used for the adapter MCP server name. */
-export function hashStore(storePath: string): string {
-  return createHash("sha256").update(storePath).digest("hex").slice(0, 16);
 }
 
 /** Resolve the project store from options, env, or the canonical project path. */

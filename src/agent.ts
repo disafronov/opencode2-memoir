@@ -1,5 +1,5 @@
 import { Agent, type Plugin } from "@opencode/plugin";
-import { permissionRules } from "./mcp.js";
+import { MEMOIR_SERVER_NAME, permissionRules } from "./mcp.js";
 import type { MemoirState } from "./state.js";
 
 type Registration = { dispose: () => Promise<void> };
@@ -7,12 +7,8 @@ type Registration = { dispose: () => Promise<void> };
 /** Register the hidden capture agent. No model/temperature/steps overrides. */
 export async function registerCaptureAgent(
   ctx: Plugin.Context,
-  state: MemoirState,
   systemPrompt: string,
 ): Promise<void> {
-  if (!state.toolPrefix) throw new Error("Memoir MCP namespace is not available");
-  const prefix = state.toolPrefix;
-
   await ctx.agent.transform((editor) => {
     editor.update("memoir", (agent) => {
       agent.name = Agent.Name.make("memoir");
@@ -21,7 +17,7 @@ export async function registerCaptureAgent(
       agent.mode = "subagent";
       agent.hidden = true;
       agent.system = systemPrompt;
-      agent.permissions = permissionRules(prefix).map((rule) => ({
+      agent.permissions = permissionRules().map((rule) => ({
         action: rule.action,
         resource: rule.resource,
         effect: rule.effect,
@@ -31,14 +27,11 @@ export async function registerCaptureAgent(
 }
 
 /**
- * Filter the capture agent's request-time tool list to the selected Memoir
- * namespace. This removes the `skill` visibility exception and any unrelated
- * tool without touching other agents.
+ * Filter the capture agent's request-time tool list to the `memoir` namespace.
+ * This removes the `skill` visibility exception and any unrelated tool without
+ * touching other agents.
  */
-export async function registerCaptureToolFilter(
-  ctx: Plugin.Context,
-  state: MemoirState,
-): Promise<Registration> {
+export async function registerCaptureToolFilter(ctx: Plugin.Context): Promise<Registration> {
   return ctx.session.hook("context", async (event) => {
     if (event.agent !== "memoir") return;
 
@@ -46,7 +39,7 @@ export async function registerCaptureToolFilter(
       const tools = await ctx.tool.list();
       const allowed = new Set<string>();
       for (const tool of tools) {
-        if (tool.options?.namespace === state.namespace) {
+        if (tool.options?.namespace === MEMOIR_SERVER_NAME) {
           if (tool.name === "memoir_checkout" || tool.name === "memoir_forget") continue;
           allowed.add(tool.id);
         }
@@ -70,9 +63,7 @@ export async function registerOnboardCommand(
   prompt: string,
   awaitReady: () => Promise<void>,
 ): Promise<Registration> {
-  let registered = false;
   return ctx.command.transform((editor) => {
-    if (registered) return;
     editor.add({
       name: "memoir:onboard",
       description: "Populate or refresh the project snapshot in Memoir",
@@ -91,7 +82,7 @@ export async function registerOnboardCommand(
               : "";
 
         const text =
-          `${prompt}\n\nSelected Memoir MCP server: ${state.serverName ?? "(unavailable)"}` +
+          `${prompt}\n\nSelected Memoir MCP server: ${MEMOIR_SERVER_NAME}` +
           (args.trim() ? `\nUser arguments: ${args.trim()}` : "");
 
         await ctx.session.prompt({
@@ -101,6 +92,5 @@ export async function registerOnboardCommand(
         });
       },
     });
-    registered = true;
   });
 }
