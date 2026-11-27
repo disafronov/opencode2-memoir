@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 const required = [
   "package.json",
   "README.md",
-  "NOTICE",
+  "NOTICE.md",
   "LICENSE",
   "dist/index.js",
   "dist/index.d.ts",

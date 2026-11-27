@@ -177,5 +177,5 @@ late-write ambiguity contract.
 
 The capture and onboarding prompts are generated from Memoir v0.2.9 at commit
 `0b92609461d8d3ebeacec55ad26d3250b86558e8` through the patches in `patches/`.
-Memoir is Apache-2.0 licensed. See `NOTICE`. The generated prompts are included
+Memoir is Apache-2.0 licensed. See `NOTICE.md`. The generated prompts are included
 in `dist/prompts/`; the `vendor/memoir` submodule is build-time only.

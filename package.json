@@ -13,7 +13,7 @@
   },
   "files": [
     "dist",
-    "NOTICE",
+    "NOTICE.md",
     "README.md",
     "LICENSE"
   ],
