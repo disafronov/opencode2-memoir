@@ -1,3 +1,9 @@
+## [1.0.1](https://github.com/disafronov/opencode2-memoir/compare/v1.0.0...v1.0.1) (2026-11-27)
+
+### Code Refactoring
+
+* validate publishing ([ac8a0ec](https://github.com/disafronov/opencode2-memoir/commit/ac8a0ec69d7433947b36e38d567c07ad948c885f))
+
 ## 1.0.0 (2026-11-27)
 
 ### Features
