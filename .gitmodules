@@ -1,0 +1,3 @@
+[submodule "vendor/memoir"]
+	path = vendor/memoir
+	url = https://github.com/zhangfengcdt/memoir.git
