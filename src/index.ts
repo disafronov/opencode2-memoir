@@ -9,7 +9,7 @@ import { clearExecutionStart, handleExecutionSucceeded, recordExecutionStart } f
 import { registerMemoirMcp } from "./mcp.js";
 import { loadCapturePrompt, loadOnboardPrompt } from "./prompts.js";
 import { capabilities, createState, type MemoirState } from "./state.js";
-import { ensureStore, hashStore, resolveStore, safeRealpath } from "./store.js";
+import { ensureStore, resolveStore } from "./store.js";
 
 type Registration = { dispose: () => Promise<void> };
 
@@ -34,7 +34,7 @@ export default Plugin.define({
     try {
       const storePath = resolveStore(ctx);
       const canonicalStore = await ensureStore(storePath);
-      state = createState(ctx, canonicalStore, hashStore(safeRealpath(canonicalStore)));
+      state = createState(ctx, canonicalStore);
     } catch (error) {
       log("store setup failed; plugin is inert", error);
       return noopCleanup;
@@ -81,10 +81,8 @@ export default Plugin.define({
 
     try {
       await registerMemoirMcp(ctx, state);
-      mcpRegistrationSucceeded = Boolean(state.serverName && state.namespace && state.toolPrefix);
-      if (!mcpRegistrationSucceeded) log("MCP registration did not select a namespace");
+      mcpRegistrationSucceeded = true;
     } catch (error) {
-      state.mcpRegistered = false;
       state.mcpReady = false;
       log("MCP registration failed; capture/onboarding disabled", error);
     }
@@ -96,9 +94,9 @@ export default Plugin.define({
       log("foreground Memoir guard failed; automatic branch changes disabled", error);
     }
 
-    if (mcpRegistrationSucceeded && state.toolPrefix && capturePrompt) {
+    if (mcpRegistrationSucceeded && capturePrompt) {
       try {
-        await registerCaptureAgent(ctx, state, capturePrompt);
+        await registerCaptureAgent(ctx, capturePrompt);
         agentReady = true;
       } catch (error) {
         log("capture agent registration failed; capture disabled", error);
@@ -107,7 +105,7 @@ export default Plugin.define({
 
     if (mcpRegistrationSucceeded && agentReady) {
       try {
-        registrations.push(await registerCaptureToolFilter(ctx, state));
+        registrations.push(await registerCaptureToolFilter(ctx));
         contextReady = true;
       } catch (error) {
         log("capture tool filter registration failed; capture disabled", error);
@@ -133,7 +131,7 @@ export default Plugin.define({
     }
 
     // Branch sync may start before MCP discovery; capture and onboarding wait
-    // for the MCP transform to confirm the actual selected namespace.
+    // for the MCP transform to confirm the fixed `memoir` registration.
     refreshCapabilities();
 
     if (mcpRegistrationSucceeded && state.branchSyncEnabled && onboardPrompt) {

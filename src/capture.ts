@@ -1,5 +1,6 @@
 import type { Plugin } from "@opencode/plugin";
 import { afterCapture, snapshot } from "./branch.js";
+import { MEMOIR_TOOL_PREFIX } from "./mcp.js";
 import type { ActiveCapture, MemoirState } from "./state.js";
 import { deferred, withStoreLock } from "./state.js";
 import { checkoutBranch } from "./store.js";
@@ -93,15 +94,14 @@ export function extractTurn(messages: ContextMessage[], idleID: string): string 
  * Inspect the native capture context. Any Memoir tool part that did not reach
  * `completed` is ambiguous; a malformed assistant content is also ambiguous.
  */
-export function auditMemoirToolParts(messages: unknown[], prefix: string): boolean {
-  if (!prefix) return true;
+export function auditMemoirToolParts(messages: unknown[]): boolean {
   for (const value of messages) {
     const message = value as ContextMessage;
     if (message?.type !== "assistant") continue;
     if (!Array.isArray(message.content)) return true;
     for (const part of message.content) {
       if (part?.type !== "tool") continue;
-      if (typeof part.name !== "string" || !part.name.startsWith(prefix)) continue;
+      if (typeof part.name !== "string" || !part.name.startsWith(MEMOIR_TOOL_PREFIX)) continue;
       if (part.state?.status !== "completed") return true;
     }
   }
@@ -240,7 +240,7 @@ async function runCapture(
       }
 
       const context = await ctx.session.context({ sessionID: created.id });
-      if (auditMemoirToolParts(context, state.toolPrefix ?? "")) ambiguous = true;
+      if (auditMemoirToolParts(context)) ambiguous = true;
     });
   } catch (error) {
     console.error("[memoir] capture worker error", error);

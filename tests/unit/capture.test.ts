@@ -61,54 +61,40 @@ describe("exact completed turn", () => {
 });
 
 describe("terminal Memoir tool audit", () => {
-  const prefix = "memoir_plugin_x_";
+  const prefix = "memoir_";
 
   it("is safe with no Memoir parts", () => {
-    assert.equal(auditMemoirToolParts([user("u", "q"), assistant("a", "done")], prefix), false);
+    assert.equal(auditMemoirToolParts([user("u", "q"), assistant("a", "done")]), false);
   });
 
   it("is safe only when every Memoir part completed", () => {
-    assert.equal(
-      auditMemoirToolParts([tool("t", `${prefix}memoir_remember`, "completed")], prefix),
-      false,
-    );
+    assert.equal(auditMemoirToolParts([tool("t", `${prefix}memoir_remember`, "completed")]), false);
   });
 
   it("is ambiguous for error, running, streaming, or malformed state", () => {
     for (const status of ["error", "running", "streaming", "missing"]) {
-      assert.equal(
-        auditMemoirToolParts([tool("t", `${prefix}memoir_remember`, status)], prefix),
-        true,
-      );
+      assert.equal(auditMemoirToolParts([tool("t", `${prefix}memoir_remember`, status)]), true);
     }
     assert.equal(
-      auditMemoirToolParts(
-        [{ id: "a", type: "assistant", content: [{ type: "tool", name: `${prefix}x` }] }],
-        prefix,
-      ),
+      auditMemoirToolParts([
+        { id: "a", type: "assistant", content: [{ type: "tool", name: `${prefix}x` }] },
+      ]),
       true,
     );
   });
 
   it("ignores another namespace and doom_loop", () => {
     assert.equal(
-      auditMemoirToolParts(
-        [
-          tool("a", "memoir_memoir_remember", "error"),
-          tool("b", "doom_loop", "error"),
-          tool("c", "skill", "error"),
-        ],
-        prefix,
-      ),
+      auditMemoirToolParts([
+        tool("a", "other_memoir_remember", "error"),
+        tool("b", "doom_loop", "error"),
+        tool("c", "skill", "error"),
+      ]),
       false,
     );
   });
 
-  it("is ambiguous for malformed assistant content or missing prefix", () => {
-    assert.equal(
-      auditMemoirToolParts([{ id: "a", type: "assistant", content: "bad" }], prefix),
-      true,
-    );
-    assert.equal(auditMemoirToolParts([], ""), true);
+  it("is ambiguous for malformed assistant content", () => {
+    assert.equal(auditMemoirToolParts([{ id: "a", type: "assistant", content: "bad" }]), true);
   });
 });

@@ -48,7 +48,7 @@ function makeState(
     },
   } as unknown as Plugin.Context;
 
-  const state = createState(ctx, "/tmp", "hash");
+  const state = createState(ctx, "/tmp");
   state.captureEnabled = true;
   state.branchSyncEnabled = true;
   state.branch.vcsKnown = true;

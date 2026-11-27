@@ -52,9 +52,14 @@ The plugin creates a missing store with `memoir new`. An existing store whose
 `.git` directory is present is reused; `memoir new` is not called again because
 Memoir refuses to reinitialize a store with commits.
 
-The local MCP server is registered under an adapter-owned name derived from the
-store hash. Existing user MCP servers, including one named `memoir`, are
-preserved.
+The local MCP server is registered under the exact name `memoir`. The plugin is
+the authoritative owner of `memoir` while installed: on every
+`ctx.mcp.transform` invocation, including reloads, it unconditionally sets the
+`memoir` server to `memoir-mcp --store <store>`, overriding any user-defined
+`memoir` configuration in memory. User configuration files are not modified,
+unrelated MCP servers are untouched, and when the plugin is absent the original
+user-defined configuration applies normally. The fixed namespace `memoir`
+yields the effective tool prefix `memoir_`.
 
 ## Branch synchronization
 

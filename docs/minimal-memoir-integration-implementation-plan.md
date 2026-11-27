@@ -11,7 +11,7 @@ This plan implements Candidate A from `docs/minimal-memoir-integration-research.
 - The adapter owns only:
   - project store resolution;
   - store initialization through `memoir new`;
-  - collision-safe local MCP registration;
+  - authoritative `memoir` MCP registration;
   - Git-to-Memoir branch synchronization through `memoir checkout -b`;
   - exact completed-turn extraction;
   - one best-effort background capture;
@@ -86,7 +86,7 @@ After `session.wait()` and `session.get()`, before `session.remove()`:
 4. If the context read fails, or any Memoir tool part has `error`, `running`, `streaming`, or a malformed/missing state, the result is **ambiguous**.
 5. If there are no Memoir tool parts, or all are `completed`, the result is **safe**.
 
-The prefix is `<normalized-selected-server>_`; the selected server is the adapter-owned hash name (section 6.2). A `doom_loop` tool part is not a Memoir tool part and is ignored.
+The prefix is `memoir_`; the server is the adapter-owned `memoir` namespace (section 6.2). A `doom_loop` tool part is not a Memoir tool part and is ignored.
 
 This audit does not prove that unrelated external clients have stopped. It proves only that every Memoir MCP call initiated by this capture received a completed result. That is the scope of adapter branch safety.
 
@@ -223,7 +223,7 @@ No `src/cli.ts` is necessary; `store.ts` exports one `runMemoir` function used b
   - `type ActiveCapture = { captureSessionID?: string; branch?: string; provider?: string; generation: number; done: Promise<void> }`
   - `type StartRecord = BranchSnapshot`
   - `type MemoirState = { ... }`
-  - `createState(ctx, storePath, storeHash): MemoirState`; `serverName`/`namespace`/`toolPrefix` are unset until MCP registration freezes them.
+  - `createState(ctx, storePath): MemoirState`; the namespace is the fixed `memoir`, the effective tool prefix is `memoir_`.
   - `withStoreLock(state, fn): Promise<T>`
 - **Dependencies:** OpenCode Plugin Context type; no runtime dependencies.
 - **Owned state:** the type and lock implementation, not the values.
@@ -234,11 +234,11 @@ No `src/cli.ts` is necessary; `store.ts` exports one `runMemoir` function used b
 
 - **Responsibility:** resolve the canonical project store, create it, and run the Memoir CLI.
 - **Public interface:**
-  - `resolveStore(ctx): { storePath: string; storeHash: string }`
+  - `resolveStore(ctx): string`
   - `ensureStore(storePath): Promise<void>` (`memoir --json new` only when `.git` is absent)
   - `checkoutBranch(storePath, branch): Promise<{ ok: boolean; stdout: string; stderr: string; code: number }>`
   - `runMemoir(args, cwd, env?): Promise<...>`
-- **Dependencies:** `node:fs`, `node:path`, `node:os`, `node:crypto`, `node:child_process`, `MEMOIR_STORE`, `ctx.location.project.canonical`, `ctx.options`.
+- **Dependencies:** `node:fs`, `node:path`, `node:os`, `node:child_process`, `MEMOIR_STORE`, `ctx.location.project.canonical`, `ctx.options`.
 - **Owned state:** none.
 - **Lifecycle:** stateless; called during setup and branch/capture operations.
 - **Why separate:** store identity and the only two CLI operations are a coherent unit; it keeps child-process code out of index/branch.
@@ -249,7 +249,7 @@ Resolution precedence:
 2. `process.env.MEMOIR_STORE` if non-empty.
 3. `~/.memoir/<slug>` where the path is `realpath(ctx.location.project.canonical)` and slug replaces `/` and `.` with `-`.
 
-After `memoir new`, resolve the real store path again and use it consistently for MCP, CLI, and state. `storeHash` is the first 16 hex characters of SHA-256 of the resolved store path.
+After `memoir new`, resolve the real store path again and use it consistently for MCP, CLI, and state.
 
 `runMemoir` uses `execFile("memoir", args, { cwd, env: { ...process.env, MEMOIR_STORE: storePath }, ... })`, no shell and no adapter timeout. A hung CLI blocks the setup/sync/capture/guard that is waiting for it; this is accepted liveness, not a reason to add a cancellation timeout. The OS process can be stopped by the user; the CLI's own exit/failure is handled as a failed operation.
 
@@ -257,40 +257,34 @@ After `memoir new`, resolve the real store path again and use it consistently fo
 
 #### `src/mcp.ts`
 
-- **Responsibility:** select the adapter-owned MCP name once, build the local config, derive OpenCode's normalized namespace/effective prefix, and produce the capture permission rules.
+- **Responsibility:** build the local config and produce the capture permission rules; own the fixed `memoir` MCP name.
 - **Public interface:**
-  - `selectServerName(editor, desiredConfig, storeHash): string`
+  - `MEMOIR_SERVER_NAME` (`"memoir"`)
+  - `MEMOIR_TOOL_PREFIX` (`"memoir_"`)
   - `memoirConfig(storePath): Mcp.ServerConfig`
-  - `normalizeServerName(name): string`
-  - `toolPrefix(serverName): string`
-  - `sameMcpConfig(a, b): boolean`
-  - `permissionRules(prefix): Permission.Rule[]`
+  - `permissionRules(): Permission.Rule[]`
   - `registerMemoirMcp(ctx, state): Promise<void>`
-- **Dependencies:** `ctx.mcp`, `node:crypto`, OpenCode MCP/agent schema types.
-- **Owned state:** `state.serverName`, `state.namespace`, `state.toolPrefix`; set at setup and frozen.
-- **Lifecycle:** setup only; the transform may re-run on configuration reload but must not rename.
-- **Why separate:** collision-safe naming, normalization, and permissions are the highest-risk native-contract code and should be unit-tested independently.
+- **Dependencies:** `ctx.mcp`, OpenCode MCP/agent schema types.
+- **Owned state:** `state.mcpReady`; no namespace/name state.
+- **Lifecycle:** setup; the transform callback is re-applied on every invocation, including configuration reloads.
+- **Why separate:** native-contract permissions and unconditional registration are the highest-risk code and should be unit-tested independently.
 
-Selection:
+Ownership:
 
-- Base name is always `memoir_plugin_<16 hex of canonical store path>`.
-- At setup, inspect `editor.list()` and `editor.get()`.
-- If the base name is absent, use it.
-- If present with exactly the desired config, reuse it (previous adapter registration or an identical user entry).
-- If present with a different config, try `_2`, `_3`, ... until absent or identical.
-- Freeze the selected name in state. On transform re-run, if the frozen name is now occupied by a different config, do not overwrite; log and skip registration for this instance. A later plugin setup may choose a suffix.
-- Never modify any other server.
-- Do not use `memoir` as the adapter name. A user-owned `memoir` is preserved; the adapter's prefix is stable and collision-safe.
+- The plugin is the authoritative owner of `memoir` while installed.
+- Always register under the exact name `memoir`.
+- On every transform invocation, unconditionally `editor.set("memoir", desiredConfig)`, overriding any user-defined `memoir` configuration in memory.
+- Do not modify user configuration files.
+- Do not modify unrelated MCP servers.
+- When the plugin is absent, OpenCode uses the original user-defined MCP configuration normally.
+- No store hashing for MCP naming, no generated server names or numeric suffixes, no collision detection/resolution, no existing-config comparison or reuse, no dynamic namespace selection.
 
 Namespace:
 
-- Use OpenCode's exact `normalizedName`: replace every character outside `[A-Za-z0-9_-]` with `_`.
-- The selected name is safe, so `namespace = selectedName`.
-- `toolPrefix = namespace.replaceAll(".", "_") + "_"`.
-- Filter tools by `options.namespace === namespace`; identify raw names by `Tool.Info.name`.
-- Permission wildcard action: `toolPrefix + "*"`.
-- Checkout/forget denies: `toolPrefix + "*memoir_checkout"` / `toolPrefix + "*memoir_forget"` so a collision-resolved suffix remains denied.
-- A long hash is the only mitigation for a theoretical server/tool pair that produces the same effective ID; no catalog-wide resolver.
+- `namespace = "memoir"`; `toolPrefix = "memoir_"`.
+- Filter tools by `options.namespace === "memoir"`; identify raw names by `Tool.Info.name`.
+- Permission wildcard action: `"memoir_*"`.
+- Checkout/forget denies: `"memoir_*memoir_checkout"` / `"memoir_*memoir_forget"`.
 
 Config:
 
@@ -312,12 +306,12 @@ Config:
 
 - **Responsibility:** register the hidden capture agent, its context filter, and the onboarding command.
 - **Public interface:**
-  - `registerCaptureAgent(ctx, state, captureSystemPrompt): Promise<void>`
-  - `registerCaptureToolFilter(ctx, state): Promise<Registration>`
+  - `registerCaptureAgent(ctx, captureSystemPrompt): Promise<void>`
+  - `registerCaptureToolFilter(ctx): Promise<Registration>`
   - `registerOnboardCommand(ctx, state, onboardPrompt, awaitReady): Promise<Registration>`
 - **Dependencies:** `ctx.agent`, `ctx.session`, `ctx.command`, generated prompts, branch readiness.
-- **Owned state:** none; the state namespace/prefix and the prompt text are inputs.
-- **Lifecycle:** setup; returned hook registrations disposed in cleanup; command add is idempotent.
+- **Owned state:** none; the fixed `memoir` namespace/prefix and the prompt text are inputs.
+- **Lifecycle:** setup; returned hook registrations disposed in cleanup; command add is re-applied on every reload.
 - **Why separate:** agent/command tool policy is distinct from branch/capture mechanics; keeping it here makes the capture path readable.
 
 Agent fields:
@@ -332,9 +326,9 @@ Agent fields:
 - permissions in this exact order:
   - `{ action: "*", resource: "*", effect: "deny" }`
   - `{ action: "doom_loop", resource: "*", effect: "allow" }`
-  - `{ action: prefix + "*", resource: "*", effect: "allow" }`
-  - `{ action: prefix + "*memoir_forget", resource: "*", effect: "deny" }`
-  - `{ action: prefix + "*memoir_checkout", resource: "*", effect: "deny" }`
+  - `{ action: "memoir_*", resource: "*", effect: "allow" }`
+  - `{ action: "memoir_*memoir_forget", resource: "*", effect: "deny" }`
+  - `{ action: "memoir_*memoir_checkout", resource: "*", effect: "deny" }`
 
 Use `editor.update("memoir", ...)`; it creates the agent when missing. Do not touch other agents.
 
@@ -342,7 +336,7 @@ Context filter:
 
 - Only for `event.agent === "memoir"`.
 - `const tools = await ctx.tool.list()`.
-- Allowed IDs: `tool.options?.namespace === state.namespace`, raw `tool.name !== "memoir_checkout"`, raw `tool.name !== "memoir_forget"`.
+- Allowed IDs: `tool.options?.namespace === "memoir"`, raw `tool.name !== "memoir_checkout"`, raw `tool.name !== "memoir_forget"`.
 - Preserve the native `doom_loop` tool if it is present; it is not a Memoir tool and is the only allowed native control mechanism.
 - Delete every key of `event.tools` not in the allowed set; this removes the `skill` visibility exception and any unrelated tools.
 - On `ctx.tool.list()` failure, delete all tools and log; a capture with no tools is a lost capture, not a wrong-branch write.
@@ -350,12 +344,12 @@ Context filter:
 
 Onboarding command:
 
-- Name `memoir:onboard`; add only if `editor.get(name)` is absent.
+- Name `memoir:onboard`; re-apply on every reload.
 - `execute`:
   1. If `state.syncMode !== "ok"`, throw a clear Error.
   2. `await awaitReady()`; if it rejects or the mode changes, throw.
   3. Read `input.prompt?.text` (the CommandInvocation prompt is an object; support a string defensively).
-  4. Send `onboardPrompt + "\n\nSelected Memoir MCP server: " + state.serverName + "\nUser arguments: " + args` via `ctx.session.prompt({ sessionID: input.sessionID, text, delivery: input.delivery })`.
+  4. Send `onboardPrompt + "\n\nSelected Memoir MCP server: memoir" + "\nUser arguments: " + args` via `ctx.session.prompt({ sessionID: input.sessionID, text, delivery: input.delivery })`.
 - The command runs in the current session; no skill, no separate agent, no CLI.
 
 #### `src/branch.ts`
@@ -551,7 +545,7 @@ Non-Git and detached:
 Hook:
 
 - On `execute.before`:
-  - If `event.info?.options?.namespace !== state.namespace`, return.
+  - If `event.info?.options?.namespace !== "memoir"`, return.
   - If `state.activeCapture?.captureSessionID === event.sessionID`, return (the capture agent owns the branch/lock). The parent user session is not exempt; its foreground calls wait.
   - `try { await branch.awaitReady() } catch (error) { throw new Tool.Error({ message: "..." }) }`.
 - The guard never calls checkout, never interrupts, and never holds the store lock.
@@ -610,22 +604,22 @@ All steps are guarded; a setup throw would disable the entire plugin, which is u
 
 1. **Resolve options/store**
    - `resolveStore(ctx)`; options override -> `MEMOIR_STORE` -> canonical project path slug.
-   - `safeRealpath`; compute `storeHash`.
+   - `safeRealpath`.
 2. **Initialize store**
    - `ensureStore(storePath)` returns immediately when `<store>/.git` exists; otherwise it runs `memoir --json new <store>`.
    - On failure: log and return a no-op cleanup. No MCP config, no hooks, no branch sync. Do not throw.
 3. **Create state**
-   - `createState(ctx, storePath, storeHash)`; server/namespace fields are unset.
+   - `createState(ctx, storePath)`.
 4. **Register local MCP**
    - Build desired config.
-   - `await ctx.mcp.transform` selects/freezes `memoir_plugin_<hash>` and writes `state.serverName`/`namespace`/`toolPrefix`.
-   - The transform callback sets `state.mcpReady` and calls `state.onReady`; capture and onboarding remain disabled until this callback confirms the actual selected namespace. Branch sync may start earlier.
-   - If the transform fails or the frozen name is occupied with a different config after setup: log and disable MCP-dependent features. Branch sync can still run (CLI only), but capture/onboard cannot.
-   - The selected namespace/prefix are known synchronously; MCP discovery is asynchronous and not awaited.
+   - `await ctx.mcp.transform` registers `memoir`; the callback is re-applied on every invocation, including reloads, unconditionally setting `memoir`.
+   - The transform callback sets `state.mcpReady` and calls `state.onReady`; capture and onboarding remain disabled until this callback confirms the `memoir` registration. Branch sync may start earlier.
+   - If the transform fails: log and disable MCP-dependent features. Branch sync can still run (CLI only), but capture/onboard cannot.
+   - The namespace/prefix are fixed (`memoir` / `memoir_`); MCP discovery is asynchronous and not awaited.
 5. **Create branch synchronization state**
    - `createBranchSync(state)`; no sync yet. This must exist before the command/guard closures and before the event loop.
 6. **Register capture agent**
-   - Permissions derived from prefix; hidden subagent; no steps/model/temperature overrides; system prompt.
+   - Permissions derived from `memoir_`; hidden subagent; no steps/model/temperature overrides; system prompt.
    - If it fails: log; capture disabled; branch sync continues.
 7. **Register onboarding command**
    - Add `memoir:onboard`; execute uses branch readiness; prompt.
@@ -652,8 +646,8 @@ All steps are guarded; a setup throw would disable the entire plugin, which is u
 ### 4.2 Initialization order rationale
 
 - `memoir new` must precede MCP registration because the local server's `cwd` is the store.
-- MCP name/namespace must be frozen before branch/agent permissions and hooks; `ctx.tool.list` is not needed at setup.
-- Capture and onboarding are enabled only after the MCP transform callback sets `mcpReady`; the base namespace reservation alone is not enough to expose a capture agent to a possibly different collision-resolved namespace.
+- `memoir` is reserved before branch/agent permissions and hooks; `ctx.tool.list` is not needed at setup.
+- Capture and onboarding are enabled only after the MCP transform callback sets `mcpReady`.
 - Branch sync state must exist before command/guard/event wiring.
 - Agent/command/context/guard must be registered before the event loop starts, so a very early event cannot run against missing state.
 - Event subscription must precede `ctx.vcs.get` seed: an event that arrives during setup is captured by the loop; the seed only fills an uninitialized generation.
@@ -662,9 +656,9 @@ All steps are guarded; a setup throw would disable the entire plugin, which is u
 
 ### 4.3 MCP registration timing and reload
 
-- `ctx.mcp.transform` callback is synchronous; the selection reads the current editor config and sets the frozen name.
-- The transform may run on a configuration reload. It reuses the setup name/config; if the name is now occupied by a different config, it logs and does not overwrite. It does not rename mid-instance. `mcpSelected` records that a name has been frozen; after that, a later transform never selects a new name, even if the frozen entry was lost. A normalized collision with another server also disables MCP features rather than sharing a namespace.
-- A plugin reload creates a new setup instance. The setup selects a name again; an identical prior adapter config is reused; a user collision gets a suffix. New agent permissions/context/guard use the new namespace. The old instance's state is gone; reload during an active capture/unsafe state is not a safe boundary (document).
+- `ctx.mcp.transform` callback is synchronous; it unconditionally sets `memoir`.
+- The transform may run on a configuration reload. Every invocation re-applies the full `memoir` configuration, overriding any user-defined `memoir` entry in memory; it never renames and never touches unrelated servers or user configuration files.
+- A plugin reload creates a new setup instance; the old instance's state is gone. Reload during an active capture/unsafe state is not a safe boundary (document).
 - Do not install a general MCP discovery/reuse manager.
 - Do not register a second MCP server for the same store in one instance.
 
@@ -702,9 +696,6 @@ No setup step may throw out of `setup`.
 | Variable | Owner | Lifetime | Initialization | Updates | Cleanup |
 | --- | --- | --- | --- | --- | --- |
 | `storePath` | state | plugin instance | resolve/ensure | never | discarded |
-| `storeHash` | state | plugin instance | SHA-256 | never | discarded |
-| `serverName`, `namespace`, `toolPrefix` | state | plugin instance | MCP selection | never (frozen) | discarded |
-| `mcpSelected` | state | plugin instance | false; true on initial selection | never | discarded |
 | `mcpReady`, `onReady` | state | plugin instance | false/undefined; set by transform callback | callback/refresh | undefined, false |
 | `generation` | branch | plugin instance | 0; seed sets 1; events increment | every matching VCS event | discarded |
 | `desiredBranch`, `desiredProvider` | branch | plugin instance | from seed/events | VCS events | discarded |
@@ -818,15 +809,15 @@ No `syncedBranch`, no actual Memoir branch cache, no status parser, no persisten
 
 ### 6.2 MCP registration and permissions
 
-- Stable base hash name fixed synchronously before agent/guard registration; the MCP transform callback (which runs after setup) resolves normalized collisions with a suffix and updates `state.namespace`; the base tool prefix still matches suffixed effective IDs.
-- Preserve all user servers; never overwrite.
+- Fixed server name `memoir`; fixed namespace `memoir`; fixed effective tool prefix `memoir_`.
+- The plugin is the authoritative owner of `memoir` while installed: every transform invocation, including reloads, unconditionally `editor.set("memoir", config)`, overriding any user-defined `memoir` configuration in memory.
+- Preserve all unrelated user servers; never modify user configuration files; when the plugin is absent, the original user configuration is effective.
+- No store hashing for MCP naming; no generated names or numeric suffixes; no collision detection/resolution; no existing-config comparison or reuse; no dynamic namespace selection; no ownership-conflict handling.
 - Config as section 3.4; `protocol:legacy`, `codemode:false`, `cwd=store`, explicit store.
-- Namespace/prefix from exact OpenCode normalization.
-- Permissions from prefix; checkout/forget denied last.
+- Permissions from `memoir_`; checkout/forget denied last.
 - Context filter by namespace + raw names; dynamic catalog; no fixed effective IDs.
-- Prompts use tool roles; onboarding prompt includes selected server name at runtime.
+- Prompts use tool roles; onboarding prompt names `memoir` as the selected server.
 - No general MCP discovery/reuse manager; no storage key.
-- Reload: identical adapter config reused; different user config at the reserved name => choose a suffix in the transform callback and update `state.namespace`; no overwrite.
 
 ### 6.3 Branch synchronization
 
@@ -864,7 +855,7 @@ No `syncedBranch`, no actual Memoir branch cache, no status parser, no persisten
 ### 6.6 Onboarding
 
 - Command only; no skill.
-- Generated upstream patch; roles; selected server name runtime.
+- Generated upstream patch; roles; selected server name `memoir`.
 - `execute` readiness; current session; input arguments.
 - No CLI/helper scripts/extractors.
 - Simple non-Git procedure in prompt.
@@ -894,7 +885,7 @@ README must cover:
 - plugin reload is not a safe recovery/sync boundary;
 - native MCP process failure/degradation;
 - prompt provenance and Apache-2.0 NOTICE;
-- the stable adapter MCP server name/prefix and that user `memoir` servers are not overwritten;
+- the `memoir` MCP ownership contract: fixed name `memoir`, prefix `memoir_`, authoritative override of a user-defined `memoir`, no user-file modification, unrelated servers untouched, original config effective without the plugin;
 - no V1 compatibility layer.
 
 ## 7. Test strategy
@@ -903,9 +894,9 @@ README must cover:
 
 | Area | Cases |
 | --- | --- |
-| Store | options > env > canonical slug; symlink; subdirectory/worktree canonical values via fixtures; missing home; store hash stability. |
+| Store | options > env > canonical slug; symlink; subdirectory/worktree canonical values via fixtures; missing home. |
 | CLI | `memoir` args/cwd/env; `new` idempotence calls; `checkout -b` success/failure/exit code; no shell. |
-| MCP naming | always hash; identical config reuse; different config suffix; exact normalization (`-`/`_`/dots); no overwrite; frozen name/prompt identity; reload collision disables instead of renaming; actual selected namespace drives filter/guard/onboarding. |
+| MCP naming | fixed `memoir` name; fixed `memoir_` prefix; unconditional `editor.set("memoir", ...)` on every transform; override user-defined `memoir`; unrelated servers unchanged; applied on reload; no hashing/suffixes/collision handling. |
 | Permissions | exact rule order; wildcard prefix; checkout/forget last deny; no other agent. |
 | Prompt build | patch apply/fail; no placeholders; no raw `memoir_*` in positive prompt; no CLI/helper/skill markers; role-to-upstream-tool contract; generated files packaged. |
 | Turn extraction | exact idle; previous-idle boundary; last assistant text + nearest user; tool/reasoning excluded; no exact idle => drop; no user/assistant => drop; A->B->A generation. |
@@ -923,13 +914,13 @@ Use the pinned real OpenCode 2.4.1 binary and Memoir 0.2.9; isolated XDG/DB; det
 
 | Scenario | Assertions |
 | --- | --- |
-| Local MCP boot | Store created; local server connected; selected hash name; Memoir tools visible to main agent; user `memoir` server preserved. |
+| Local MCP boot | Store created; local server connected; `memoir` name; Memoir tools visible to main agent. |
 | Store/CLI branch | `memoir new`; CLI `checkout -b`; MCP `memoir_status`/remember sees the branch. |
 | Initial VCS | Plugin setup syncs the current branch; empty `ctx.vcs.get` path waits for event. |
 | Ordinary/rapid branch changes | Branch checked out once per coalesced change; latest branch wins; no stale override. |
 | Exact capture | User turn -> capture session -> memory on correct branch; exact idle; capture removed; parent intact. |
 | Empty store | First capture creates a new top-level path via Memoir remember; memory exists. |
-| Capture agent tools | Only adapter namespace tools; no checkout/forget/skill; direct checkout attempt denied. |
+| Capture agent tools | Only `memoir_` namespace tools; no checkout/forget/skill; direct checkout attempt denied. |
 | Branch change during capture | Sync waits; capture memory remains on recorded branch; after capture latest branch syncs. |
 | Foreground wait | A main-agent Memoir call during capture/pending sync waits; after sync it runs; no wrong branch. |
 | Failed checkout | Sync/guard error; no retry loop; later VCS event retries; capture with failed recorded-branch checkout drops. |
@@ -937,7 +928,7 @@ Use the pinned real OpenCode 2.4.1 binary and Memoir 0.2.9; isolated XDG/DB; det
 | Capture failure | Safe model failure with completed/no Memoir tool part; sync allowed; no retry. |
 | Interrupt | Async checkpoint interrupt -> safe interrupted => suppressed; no immediate sync; later VCS retries. |
 | Non-blocking MCP non-yield | Real slow wrapper/timeout evidence; adapter audit; no branch switch. |
-| Existing MCP config | User `memoir`/similar servers preserved; hash server added; no overwrite; tool IDs. |
+| Existing MCP config | User-defined `memoir` overridden at runtime; unrelated servers unchanged; no user-file modification; original config effective without the plugin; correct after reload. |
 | Shutdown | Active 20 s capture; SIGTERM exits <10 s; no deadline message; MCP child gone; no adapter drain. |
 | Store identity | Subdirectory, worktree, separate Git dir, symlink, explicit override. |
 | MCP crash | Child kill => status failed; no auto-restart; capture/onboard degrade; branch CLI still works. |
@@ -1064,9 +1055,8 @@ Avoid the V1 mistake: the integration tests must exercise `memoir new`, real CLI
 - **Plugin reload during active capture:** old MCP child/handler may survive; new instance may lose safety state. Not a safe boundary.
 - **Local MCP process crash:** no auto-restart; tools disappear until reconnect/restart; capture/onboarding degrade.
 - **Separate Git directory:** store identity uses the worktree path, so the V1 common-directory slug can differ; no compatibility layer.
-- **Theoretical tool-ID collision:** a long hash name is the only mitigation; no catalog-wide resolver.
 - **Prompt behavior:** patches are mechanically validated; real-model extraction/onboarding quality is not measured.
-- **User-configured Memoir servers:** the adapter preserves them but coordinates only its selected hash namespace. A separate user Memoir server is outside the adapter's branch guard/sync.
+- **User-configured Memoir servers:** a user-defined `memoir` server is overridden at runtime while the plugin is installed; unrelated servers are untouched. Without the plugin, user configuration is effective.
 - **Non-Git onboarding:** prompt-only summary; deterministic Memoir extractors are not reproduced.
 - **Non-Git/unknown capture:** public session data does not expose a confirmed non-Git marker; an empty VCS state and a non-Git directory are indistinguishable. The adapter drops both conservatively. This is a limitation accepted by the implementation instructions.
 - **No SessionStart/recall injection:** outside scope.
@@ -1082,7 +1072,7 @@ None for implementation. The only unresolved item is behavioral prompt quality, 
 
 These findings were discovered while implementing and refining the adapter; they do not reopen the accepted architecture.
 
-- **MCP transform timing:** `ctx.mcp.transform` callbacks can be applied after `setup()` returns. The namespace must be reserved synchronously before the agent, context filter, and guard are registered. The implementation reserves `memoir_plugin_<storeHash>` immediately; the later transform callback resolves exact/normalized collisions with a suffix and updates `state.namespace`. The stable base tool prefix still matches the suffixed effective tool IDs. `ctx.mcp.reload()` is not a setup barrier.
+- **MCP transform timing:** `ctx.mcp.transform` callbacks can be applied after `setup()` returns. The fixed `memoir` name and `memoir_` prefix need no synchronous reservation; the callback unconditionally sets `memoir`, re-applied on every transform, including reloads. Capture and onboarding wait for `mcpReady`. `ctx.mcp.reload()` is not a setup barrier.
 - **Store creation:** `memoir new` refuses an existing store with commits. The adapter checks `<store>/.git` and skips reinitialization, matching Memoir MCP's own `ensure_store`.
 - **Non-Git capture:** public `SessionInfo.location` does not expose a confirmed non-Git marker; an empty VCS state is indistinguishable from an uninitialized Git repository at capture time. The adapter drops both conservatively.
 - **Dependency gating:** the implementation enables branch sync only with a registered guard and event subscription; capture requires MCP, agent, context filter, guard, event subscription, and generated prompt; onboarding requires MCP, branch sync, and the onboarding prompt.

@@ -1,5 +1,6 @@
 import type { Plugin } from "@opencode/plugin";
 import { Tool } from "@opencode/plugin/effect";
+import { MEMOIR_SERVER_NAME } from "./mcp.js";
 import type { BranchSnapshot, MemoirState } from "./state.js";
 import { withStoreLock } from "./state.js";
 import { checkoutBranch } from "./store.js";
@@ -244,8 +245,8 @@ export async function registerMemoirToolGuard(
   state: MemoirState,
 ): Promise<{ dispose: () => Promise<void> }> {
   return ctx.tool.hook("execute.before", async (event) => {
-    if (!state.mcpRegistered || !state.namespace) return;
-    if (event.info?.options?.namespace !== state.namespace) return;
+    if (!state.mcpReady) return;
+    if (event.info?.options?.namespace !== MEMOIR_SERVER_NAME) return;
     if (state.activeCapture?.captureSessionID === event.sessionID) return;
 
     try {

@@ -28,7 +28,7 @@ function testState(): MemoirState {
     },
     options: {},
   } as unknown as Plugin.Context;
-  const state = createState(ctx, "/tmp", "storehash");
+  const state = createState(ctx, "/tmp");
   state.branchSyncEnabled = true;
   state.branch.vcsKnown = true;
   state.branch.desiredProvider = "git";
@@ -280,8 +280,8 @@ describe("wait-only guard", () => {
 
   it("skips the adapter's own capture session without waiting on itself", async () => {
     const state = testState();
-    state.mcpRegistered = true;
-    state.namespace = "memoir_plugin_x";
+    state.mcpReady = true;
+
     const barrier = deferred();
     state.activeCapture = {
       captureSessionID: "capture-session",
@@ -293,7 +293,7 @@ describe("wait-only guard", () => {
     };
     const { callback } = await guardFor(state);
     await callback({
-      info: { options: { namespace: "memoir_plugin_x" } },
+      info: { options: { namespace: "memoir" } },
       sessionID: "capture-session",
     } as never);
     barrier.resolve();
@@ -301,14 +301,14 @@ describe("wait-only guard", () => {
 
   it("rejects foreground Memoir tools while suppressed", async () => {
     const state = testState();
-    state.mcpRegistered = true;
-    state.namespace = "memoir_plugin_x";
+    state.mcpReady = true;
+
     state.branch.syncMode = "suppressed";
     const { callback } = await guardFor(state);
     await assert.rejects(
       () =>
         callback({
-          info: { options: { namespace: "memoir_plugin_x" } },
+          info: { options: { namespace: "memoir" } },
           sessionID: "parent-session",
         } as never),
       (error: unknown) => error instanceof Tool.Error,
@@ -317,8 +317,8 @@ describe("wait-only guard", () => {
 
   it("ignores tools from other namespaces", async () => {
     const state = testState();
-    state.mcpRegistered = true;
-    state.namespace = "memoir_plugin_x";
+    state.mcpReady = true;
+
     const { callback } = await guardFor(state);
     await callback({
       info: { options: { namespace: "another-server" } },

@@ -5,7 +5,6 @@ import { createServer as createTcpServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { hashStore, safeRealpath } from "../../src/store.js";
 
 const exec = promisify(execFile);
 
@@ -181,6 +180,7 @@ export type OpenCodeHarness = {
   root: string;
   project: string;
   store: string;
+  configPath: string;
   api: <T = unknown>(path: string, init?: RequestInit) => Promise<T>;
   createSession: (title: string) => Promise<string>;
   prompt: (sessionID: string, text: string) => Promise<void>;
@@ -188,6 +188,7 @@ export type OpenCodeHarness = {
   sessions: () => Promise<Array<Record<string, unknown>>>;
   mcp: () => Promise<Array<Record<string, unknown>>>;
   agents: () => Promise<Array<Record<string, unknown>>>;
+  commands: () => Promise<Array<Record<string, unknown>>>;
   git: (...args: string[]) => Promise<string>;
   status: () => Promise<Record<string, unknown> | undefined>;
   get: (key: string) => Promise<boolean>;
@@ -201,8 +202,12 @@ export type OpenCodeHarness = {
 export type OpenCodeOptions = {
   modelUrl: string;
   path?: string;
+  /** Register a user-defined `memoir` MCP server. */
   userMcp?: boolean;
-  collideWithAdapter?: boolean;
+  /** Register an unrelated `other` MCP server. */
+  unrelatedMcp?: boolean;
+  /** Load this plugin; default true. */
+  withPlugin?: boolean;
   store?: string;
   env?: Record<string, string>;
 };
@@ -255,10 +260,9 @@ export async function startOpenCode(options: OpenCodeOptions): Promise<OpenCodeH
   await mkdir(join(xdg, "cache"), { recursive: true });
   await mkdir(join(xdg, "state"), { recursive: true });
   const configPath = join(configDir, "opencode.json");
-  const collisionName = `memoir_plugin_${hashStore(safeRealpath(store))}`;
   const config = {
     $schema: "https://opencode.ai/config.json",
-    plugins: [process.cwd()],
+    plugins: options.withPlugin === false ? [] : [process.cwd()],
     model: "probe/fake",
     provider: {
       probe: {
@@ -270,7 +274,7 @@ export async function startOpenCode(options: OpenCodeOptions): Promise<OpenCodeH
         },
       },
     },
-    ...(options.userMcp || options.collideWithAdapter
+    ...(options.userMcp || options.unrelatedMcp
       ? {
           mcp: {
             ...(options.userMcp
@@ -282,9 +286,9 @@ export async function startOpenCode(options: OpenCodeOptions): Promise<OpenCodeH
                   },
                 }
               : {}),
-            ...(options.collideWithAdapter
+            ...(options.unrelatedMcp
               ? {
-                  [collisionName]: {
+                  other: {
                     type: "local",
                     command: ["sleep", "60"],
                     disabled: false,
@@ -387,6 +391,13 @@ export async function startOpenCode(options: OpenCodeOptions): Promise<OpenCodeH
     return result.data;
   };
 
+  const commands = async () => {
+    const result = await api<{ data: Array<Record<string, unknown>> }>(
+      `/api/command?location[directory]=${encodeURIComponent(project)}`,
+    );
+    return result.data;
+  };
+
   const git = async (...args: string[]) => {
     const result = await exec("git", args, { cwd: project, encoding: "utf8" });
     return result.stdout.trim();
@@ -446,6 +457,7 @@ export async function startOpenCode(options: OpenCodeOptions): Promise<OpenCodeH
     root,
     project,
     store,
+    configPath,
     api,
     createSession,
     prompt,
@@ -453,6 +465,7 @@ export async function startOpenCode(options: OpenCodeOptions): Promise<OpenCodeH
     sessions,
     mcp,
     agents,
+    commands,
     git,
     status,
     get,
